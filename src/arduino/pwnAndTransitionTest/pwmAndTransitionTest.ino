@@ -15,6 +15,9 @@ float userTimeout[2][2];                      // The times at each receiver wher
 int rssiHistory[2][2][10];                    // History of RSSI for averaging: divided by receiver, then by user.
 float currentTime = (float)millis() / 1000.0; // Track the current time (to determine timeout activation)
 
+int priorityUserZoneHistory[] = {0, 0};
+int standardUserZoneHistory[] = {0, 0};
+
 void setup() {
   // Open serial connection to transmit data (for development/logging purposes)
   // NOTE: Keep baum at 115200 and not a low value like 9600: buffering can slow down the core loop
@@ -70,24 +73,67 @@ void loop() {
     // Get timing info just to check
     currentTime = (float)millis() / 1000.0;
     Serial.println((String)"CURRENT: " + currentTime);
+    
+    // ------- RECEIVER 1 -------
 
-    // RECEIVER 1: If our priority user is on scene, light the zone for them as they need
-    if (priority1 > 30) {
+    // RECEIVER 1: If our priority user entered the queue, light the zone for them as they need
+    if (priority1 > 30 && priorityUserZoneHistory[1] == 0) {
       analogWrite(ble1pins[0], 255);
       analogWrite(ble1pins[1], 0);
-
-    // RECEIVER 1: If our priority user isn't nearby, but our secondary user is, give secondary their preference
-    } else if (standard1 > 30) {
-      analogWrite(ble1pins[0], 0);
-      analogWrite(ble1pins[1], 255);
-
-    // RECEIVER 1: No one is nearby: turn off the light
+      priorityUserZoneHistory[0] = 1;
     } else {
       analogWrite(ble1pins[0], 0);
+    }
+    
+    // RECEIVER 1: If our standard user entered the queue, note that.
+    if (standard1 > 30 && standardUserZoneHistory[1] == 0) {
+      standardUserZoneHistory[0] = 1;
+
+      // RECEIVER 1: If the priority user is not in the zone or moved ahead already, light the zone for the standard user
+      if (priority1 <= 30 || priorityUserZoneHistory[1] == 1) {
+        analogWrite(ble1pins[1], 255);
+      } else {
+        analogWrite(ble1pins[1], 0);
+      }
+    } else {
       analogWrite(ble1pins[1], 0);
     }
 
-    // TODO: Implement Receiver 2 and Queue Transitions
+    // ------- RECEIVER 2 -------
+
+    // RECEIVER 2: If our priority user entered the next zone, light the zone for them as they need
+    if (priority2 > 30 && priorityUserZoneHistory[0] == 1) {
+      analogWrite(ble2pins[0], 255);
+      analogWrite(ble2pins[1], 0);
+      priorityUserZoneHistory[1] = 1;
+    } else {
+      analogWrite(ble2pins[0], 0);
+    }
+    
+    // RECEIVER 2: If our standard user entered the next zone, note that.
+    if (standard2 > 30 && standardUserZoneHistory[0] == 1) {
+      standardUserZoneHistory[1] = 1;
+
+      // RECEIVER 2: If the priority user is not in the zone or left the queue, light the zone for the standard user
+      if (priority2 <= 30 || priorityUserZoneHistory[0] == 0) {
+        analogWrite(ble2pins[1], 255);
+      } else {
+        analogWrite(ble2pins[1], 0);
+      }
+    } else {
+      analogWrite(ble2pins[1], 0);
+    }
+
+    // RECCEIVER 2: Check to confirm whether the users have left the queue
+    if (priority2 <= 30 && priorityUserZoneHistory[1] == 1) {
+        priorityUserZoneHistory[0] = 0;
+        priorityUserZoneHistory[1] = 0;
+    }
+
+   if (standard2 <= 30 && standardUserZoneHistory[1] == 1) {
+        standardUserZoneHistory[0] = 0;
+        standardUserZoneHistory[1] = 0;
+    }
   }
 
   // ##################
