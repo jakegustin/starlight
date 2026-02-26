@@ -1,9 +1,8 @@
 // PWM Demo
 int mycolor = 0;               // The color to be made brighter
-int lastcolor = 3;             // The color to be made dimmer
+int lastcolor = -1;            // The color to be made dimmer. Intentionally -1 to start
 int pins[] = {25, 26, 27, 14}; // The pins corresponding to the test LEDs
 int current_cycle_num = 0;     // How far along the color transition should be
-int passed_first_run = 0;      // Variable that ensures there is no 2nd LED during the first transition
 
 // "BLE" Demo
 int ble1pins[] = {12, 13};                    // The pins corresponding to Receiver 1's LEDs used in this demo
@@ -34,7 +33,8 @@ void setup() {
     pinMode(ble2pins[i], OUTPUT);
 
     for (int j = 0; j < 10; j++) {
-      userTimeout[i][j] = -1.0;
+      if (j <= 1)
+        userTimeout[i][j] = -1.0;
       rssiHistory[i][0][j] = -1;
       rssiHistory[i][1][j] = -1;
     }
@@ -140,24 +140,21 @@ void loop() {
   // # PWM LIGHT DEMO #
   // ##################
 
-  // Make the target LED brighter
+  // Make the target LED brighter (and the previous one dimmer, if applicable)
   analogWrite(pins[mycolor], current_cycle_num);
-
-  // Assuming this isn't the very first time, also dim the previous light at the same pace
-  if (passed_first_run != 0)
+  if (lastcolor != -1)
     analogWrite(pins[lastcolor], 255 - current_cycle_num);
 
   // If the LEDs are fully lit/dim, select the next LEDs and reset the count
-  if (current_cycle_num == 255) {
+  if (current_cycle_num >= 255) {
     current_cycle_num = 0;
+    lastcolor = mycolor;
     mycolor = (mycolor + 1) % 4;
-    lastcolor = (lastcolor + 1) % 4;
 
-    // If this was the first time we lit up an LED, signal that we can now start dimming previous LEDs
-    if (passed_first_run == 0)
-      passed_first_run = 1;
+  // Otherwise, just increment the count to continue progression
   } else {
     current_cycle_num += 1;
   }
+
   delay(1);
 }
