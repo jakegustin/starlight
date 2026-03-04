@@ -36,7 +36,9 @@ class KalmanFilter:
     def predict(self) -> tuple[float, float]:
         """
         Provides the current state and the uncertainty tied to that state
+        More precisely for uncertainty, utilize the covariance extrapolation equation to compute estimate variance
         """
+        # Covariance extrapolation formula derived from https://kalmanfilter.net/kalman1d_pn.html
         return self.x, self.p + self.q
 
     def update(self, measurement: float) -> float:
@@ -49,19 +51,33 @@ class KalmanFilter:
             return self.x
 
         x_pred, p_pred = self.predict()
+
+        # Formulas derived from https://kalmanfilter.net/kalman1d_pn.html
+        # Compute Kalman Gain from combined process noise & uncertainty, along with measurement variance
         k = p_pred / (p_pred + self.r)
+
+        # Compute the new system state from the existing system state, Kalman Gain, and the measured state
         self.x = x_pred + k * (measurement - x_pred)
+
+        # Compute the new covariance from the Kalman Gain and the existing estimate variance
         self.p = (1.0 - k) * p_pred
+
         return self.x
 
     def is_outlier(self, measurement: float, gate: float = 3.0) -> bool:
         """
-        Determine if the measurement is an outlier by `gate` standard deviations. First measurement is never an outlier
+        A simpler method to determine if the measurement is an outlier by `gate` standard deviations
         """
+        # First measurement is never considered an outlier
         if not self._initialized:
             return False
+        
         x_pred, p_pred = self.predict()
+
+        # Get standard deviation of one entry of combined process/measurement noise and covariance
         std = (p_pred + self.r) ** 0.5
+
+        # Determine if the measurement exceeds our outlier threshold
         return abs(measurement - x_pred) / std > gate
 
     def reset(self) -> None:
