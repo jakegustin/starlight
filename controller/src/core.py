@@ -76,10 +76,12 @@ class CentralController:
         Adds/Registers a user into the system who can enable zone effects
         """
         self._priority_map[uuid] = priority
-        if uuid in self._users:
+        if uuid not in self._users:
+            self._users[uuid] = User(uuid)
+        else:
             self._users[uuid].priority = priority
 
-    def ingest(self, raw_json: str) -> ZoneEvents:
+    def ingest(self, raw_json: str) -> ZoneEvents | None:
         """
         Ingests a raw JSON output provided by a BLE receiver
         """
@@ -97,12 +99,14 @@ class CentralController:
         timestamp: float,
         uuid: str,
         rssi: float,
-    ) -> ZoneEvents:
+    ) -> ZoneEvents | None:
         """
         Updates controller buffers and event logs based upon reading data
         """
         events: ZoneEvents = []
         user = self._ensure_user(uuid)
+        if not user:
+            return None
         user.last_seen = timestamp
 
         # Retrieve the buffer corresponding to a given zone
@@ -150,12 +154,14 @@ class CentralController:
         """
         return list(self._event_log)
 
-    def _ensure_user(self, uuid: str) -> User:
+    def _ensure_user(self, uuid: str) -> User | None:
         """
-        Fetch the User instance for a given UUID, creating a new instance if none exists for the UUID
+        Fetch the User instance for a given UUID, or indicate that the user does not exist!
         """
+        # If the user isn't registered in the system, don't allow them to manipulate the lights
         if uuid not in self._users:
-            self._users[uuid] = User(uuid, priority=self._priority_map.get(uuid, 0))
+            # self._users[uuid] = User(uuid, priority=self._priority_map.get(uuid, 0)) Let's not automatically create the user!
+            return None
         return self._users[uuid]
 
     def _zone_index(self, zone_id: str) -> int:
