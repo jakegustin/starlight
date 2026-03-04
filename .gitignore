@@ -1,0 +1,3 @@
+.pytest_cache
+starlight_venv
+__pycache__
