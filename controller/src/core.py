@@ -15,6 +15,8 @@ class CentralController:
     ----------
     zone_order : list[str]
         The order of the zones in the queue
+    automatic_registration : bool
+        Determine if any and all BLE UUIDs can automatically be registered into the queue system
     rssi_entry_threshold : float
         The minimum RSSI to be eligible to advance to the next zone
     rssi_exit_threshold : float
@@ -42,6 +44,7 @@ class CentralController:
     def __init__(
         self,
         zone_order: list[str],
+        automatic_registration: bool = False,
         *,
         rssi_entry_threshold: float = 30.0,
         rssi_exit_threshold: float = 10.0,
@@ -58,6 +61,7 @@ class CentralController:
             raise ValueError("zone_order must contain at least one zone")
 
         self.zone_order = list(zone_order)
+        self.automatic_registration = automatic_registration
         self.rssi_entry_threshold = rssi_entry_threshold
         self.rssi_exit_threshold = rssi_exit_threshold
         self.timeout_seconds = timeout_seconds
@@ -75,11 +79,11 @@ class CentralController:
         """
         Adds/Registers a user into the system who can enable zone effects
         """
-        self._priority_map[uuid] = priority
         if uuid not in self._users:
             self._users[uuid] = User(uuid)
         else:
             self._users[uuid].priority = priority
+        self._priority_map[uuid] = priority
 
     def ingest(self, raw_json: str) -> ZoneEvents | None:
         """
@@ -158,10 +162,14 @@ class CentralController:
         """
         Fetch the User instance for a given UUID, or indicate that the user does not exist!
         """
-        # If the user isn't registered in the system, don't allow them to manipulate the lights
-        if uuid not in self._users:
-            # self._users[uuid] = User(uuid, priority=self._priority_map.get(uuid, 0)) Let's not automatically create the user!
+        # If the user isn't registered and manual registration is needed, don't allow them to manipulate the zones!
+        if uuid not in self._users and not self.automatic_registration:
             return None
+        
+        # If the user isn't registered, but automatic registration is allowed, register them at default priority
+        elif uuid not in self._users:
+            self._users[uuid] = User(uuid, priority=self._priority_map.get(uuid, 0))
+
         return self._users[uuid]
 
     def _zone_index(self, zone_id: str) -> int:

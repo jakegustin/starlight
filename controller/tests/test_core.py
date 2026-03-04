@@ -332,6 +332,26 @@ class TestCentralController:
         uuids = {u.uuid for u in users}
         assert uuids == {"u1", "u2"}
 
+    def test_automatic_registration_single(self):
+        """
+        Ensure that automatic registration adds one user successfully
+        """
+        ctrl = self._create_controller()
+        ctrl.automatic_registration = True
+        ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
+        assert ctrl.get_user("u1") is not None
+
+    def test_automatic_registration_multiple(self):
+        """
+        Ensure that automatic registration adds multiple users successfully
+        """
+        ctrl = self._create_controller()
+        ctrl.automatic_registration = True
+        ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
+        ctrl.ingest_reading("zone-1", 0.5, "u2", 50)
+        assert ctrl.get_user("u1") is not None
+        assert ctrl.get_user("u2") is not None
+
     def test_empty_zone_order_raises(self):
         """
         Ensure that a Central Controller cannot be created without any zones
