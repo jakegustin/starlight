@@ -80,7 +80,7 @@ class CentralController:
         Adds/Registers a user into the system who can enable zone effects
         """
         if uuid not in self._users:
-            self._users[uuid] = User(uuid)
+            self._users[uuid] = User(uuid, priority)
         else:
             self._users[uuid].priority = priority
         self._priority_map[uuid] = priority
