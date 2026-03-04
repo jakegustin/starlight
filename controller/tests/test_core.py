@@ -45,21 +45,21 @@ class TestCentralController:
             }
         )
 
-    def test_ingest_json_creates_user(self):
+    def test_ingest_json_does_not_create_user(self):
         """
-        Ensure JSON ingestion creates a User instance for a previously unknown user
+        Ensure JSON ingestion does not create a new User instance
         """
         ctrl = self._create_controller()
         ctrl.ingest(self._json("zone-1", 1.0, "u1", 50))
         user = ctrl.get_user("u1")
-        assert user is not None
-        assert user.last_seen == 1.0
+        assert user is None
 
     def test_ingest_reading_direct(self):
         """
         Ensure entry/reading ingestion creates a User instance for a previously unknown user
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 2.0, "u1", 50)
         assert ctrl.get_user("u1") is not None
 
@@ -68,6 +68,7 @@ class TestCentralController:
         Ensure the user_entered event is correctly logged after the appropriate reading
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         events = ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         entered = [e for e in events if e.event_type == "user_entered"]
         assert len(entered) == 1
@@ -79,6 +80,7 @@ class TestCentralController:
         Ensure the user's current zone is updated after entering the queue/zone
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         assert ctrl.get_user("u1").current_zone == "zone-1"
 
@@ -87,6 +89,7 @@ class TestCentralController:
         Ensure that RSSI transmissions below the minimum threshold do not update the user's zone
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         events = []
         for i in range(5):
             events.extend(
@@ -99,6 +102,7 @@ class TestCentralController:
         Ensure the system correctly advances the user to the upcoming zone (and leaves the existing zone)
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         events = ctrl.ingest_reading("zone-2", 1.0, "u1", 60)
 
@@ -112,6 +116,7 @@ class TestCentralController:
         Ensure only one exit event is created when the user exits a zone
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         events = ctrl.ingest_reading("zone-2", 1.0, "u1", 60)
 
@@ -126,6 +131,7 @@ class TestCentralController:
         Ensure the user cannot skip ahead of a zone
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         events = []
         for i in range(5):
             events.extend(
@@ -140,6 +146,7 @@ class TestCentralController:
         """
         zones = ["z1", "z2", "z3"]
         ctrl = self._create_controller(zone_order=zones)
+        ctrl.register_user("u1")
 
         ctrl.ingest_reading("z1", 0.0, "u1", 50)
         ctrl.ingest_reading("z2", 1.0, "u1", 60)
@@ -156,6 +163,7 @@ class TestCentralController:
         Ensure the user staying in a zone does not trigger re-entrances
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         all_events = []
         for i in range(5):
             all_events.extend(
@@ -169,6 +177,7 @@ class TestCentralController:
         Ensure that a user exiting the queue at the last zone reset's the user's attributes
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         ctrl.ingest_reading("zone-2", 1.0, "u1", 60)
         assert ctrl.get_user("u1").current_zone == "zone-2"
@@ -192,6 +201,7 @@ class TestCentralController:
         Ensure the system advances correctly with a one-zone configuration
         """
         ctrl = self._create_controller(zone_order=["only-zone"])
+        ctrl.register_user("u1")
         ctrl.ingest_reading("only-zone", 0.0, "u1", 50)
         assert ctrl.get_user("u1").current_zone == "only-zone"
 
@@ -204,6 +214,7 @@ class TestCentralController:
         Ensure the timeout removes a long-gone user from the queue
         """
         ctrl = self._create_controller(timeout_seconds=5.0)
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 1.0, "u1", 50)
         assert ctrl.get_user("u1").current_zone == "zone-1"
 
@@ -217,6 +228,7 @@ class TestCentralController:
         Ensure that a user remains in the queue whilst their signal strength meets the minimum
         """
         ctrl = self._create_controller(timeout_seconds=5.0)
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
 
         events = ctrl.ingest_reading("zone-1", 20.0, "u1", 50)
@@ -228,6 +240,7 @@ class TestCentralController:
         Ensure that timeouts only occur to users that are currently in a zone
         """
         ctrl = self._create_controller(timeout_seconds=5.0)
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 5)
         events = ctrl.ingest_reading("zone-1", 20.0, "u1", 5) # RSSI of 5 is too weak!
         timeout = [e for e in events if e.event_type == "user_timeout"]
@@ -238,6 +251,7 @@ class TestCentralController:
         Ensure a user that timed out can rejoin at the start of the queue
         """
         ctrl = self._create_controller(timeout_seconds=5.0)
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         ctrl.ingest_reading("zone-1", 20.0, "u1", 1)  # Triggers timeout!
         assert ctrl.get_user("u1").current_zone is None
@@ -282,6 +296,7 @@ class TestCentralController:
         Ensure that priority overrides are reflected in the system state
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         assert ctrl.get_user("u1").priority == 0
 
@@ -293,6 +308,8 @@ class TestCentralController:
         Ensure that one standing user and one moving user are depicted correctly
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
+        ctrl.register_user("u2")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         ctrl.ingest_reading("zone-1", 0.5, "u2", 50)
         assert ctrl.get_user("u1").current_zone == "zone-1"
@@ -307,6 +324,8 @@ class TestCentralController:
         Ensure that two simultaneous users can be placed in the same zone
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
+        ctrl.register_user("u2")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         ctrl.ingest_reading("zone-1", 0.5, "u2", 50)
         users = ctrl.users_in_zone("zone-1")
@@ -333,6 +352,7 @@ class TestCentralController:
         Ensure that log updates are tracked appropriately for a moving user
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1")
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         ctrl.ingest_reading("zone-2", 1.0, "u1", 60)
         assert len(ctrl.event_log) >= 3  # Enter zone-1, exit zone-1, enter zone-2
@@ -342,6 +362,7 @@ class TestCentralController:
         Ensure that accessing the event log provides a copy of the log to avoid internal state changes
         """
         ctrl = self._create_controller()
+        ctrl.register_user("u1", 1)
         ctrl.ingest_reading("zone-1", 0.0, "u1", 50)
         log1 = ctrl.event_log
         log2 = ctrl.event_log

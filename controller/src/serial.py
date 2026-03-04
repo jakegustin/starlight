@@ -50,7 +50,7 @@ class SerialIngester:
             self._serial.close()
             self._serial = None
 
-    def read_once(self) -> "ZoneEvents":
+    def read_once(self) -> ZoneEvents | None:
         """
         Reads one line from the Serial connection.
         """
