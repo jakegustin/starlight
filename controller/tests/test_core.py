@@ -282,6 +282,8 @@ class TestCentralController:
         ctrl = self._create_controller()
         ctrl.register_user("priority", priority=10)
         ctrl.register_user("standard", priority=0)
+        assert ctrl.get_user("priority").priority == 10
+        assert ctrl.get_user("standard").priority == 0
 
         ctrl.ingest_reading("zone-1", 0.0, "standard", 50)
         ctrl.ingest_reading("zone-1", 1.0, "priority", 50)
