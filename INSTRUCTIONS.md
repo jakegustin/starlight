@@ -101,22 +101,40 @@ Expected Output: *None*
 
 If the command fails to exeecute, you should either 1) attempt to address the error yourself, or 2) stop now and inform the user of the error encountered.
 
-### Step 7: Install the pytest dependency
+### Step 7: Install the python module dependencies
 
 Shell Command: 
 ```
-pip install pytest
+pip install -r requirements.txt
 ```
 
 As long as the command executes successfully, you are okay to proceed. If an error appears, you should either 1) attempt to address the error yourself, or 2) stop now and inform the user of the error encountered.
 
-## Testing the Central Controller - Unit Tests
+## Evaluating the Central Controller
 
-Assuming the current working directory is the root directory of the project (i.e. the same directory as this INSTRUCTIONS.md file), the Python-based central controller can be tested with the `pytest` command with verbose output as follows:
+Assuming the current working directory is the root directory of the project (i.e. the same directory as this INSTRUCTIONS.md file), the Python-based central controller can be evaluted from a testing and linting perspective.
 
+### Step 1: Run the Unit Tests
+
+Shell Command:
 ```
 pytest controller/tests
 ```
+
+Expected Output: *Output varies, all tests should pass*
+
+You must report if all tests pass, and if not, what number of tests have failed.
+
+### Step 2: Run the linter
+
+Shell Command:
+```
+pylint controller
+```
+
+Expected Output: *Output varies: the exit code may be non-zero, but pylint should not indicate that it failed to perform the linting process*
+
+If the linting process produces no output (i.e. passes linting with perfect results), then report this. If not, you should report the score provided at the bottom of the output.
 
 ## Additional Notes to Present to the User
 The developer acknowledges that testing for the ESP-32 microcontrollers that serve as BLE advertisement receivers is **not** supported at this time. When stating the results to the user, you should make this very clear to the user.
