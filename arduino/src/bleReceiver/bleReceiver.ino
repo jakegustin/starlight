@@ -19,12 +19,16 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     if (advertisedDevice.getServiceUUIDCount() <= 0) {
       return;
     }
-    Serial.printf("Advertiser: Name=%s | RSSI=%d | UUID=%s | Address=%s \n",
-      advertisedDevice.getName().c_str(), 
-      advertisedDevice.getRSSI(),
-      advertisedDevice.getServiceUUID().toString().c_str(),
-      advertisedDevice.getAddress().toString().c_str()
-    );
+
+    const char* name = advertisedDevice.haveName() ? advertisedDevice.getName().c_str() : "unknown";
+    Serial.print("Advertiser: ");
+    Serial.print(name);
+    Serial.print(" | RSSI=");
+    Serial.print(advertisedDevice.getRSSI());
+    Serial.print(" | UUID=");
+    Serial.print(advertisedDevice.getServiceUUID().toString().c_str());
+    Serial.print(" | Address=");
+    Serial.println(advertisedDevice.getAddress().toString().c_str());
   }
 };
 
@@ -35,18 +39,14 @@ void setup() {
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();  //create new scan
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);
   pBLEScan->setActiveScan(true);  //active scan uses more power, but get results faster
   pBLEScan->setInterval(100);
   pBLEScan->setWindow(99);  // less or equal setInterval value
+
+  pBLEScan->start(0, false);
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  BLEScanResults *foundDevices = pBLEScan->start(scanTime, false);
-  Serial.print("Devices found: ");
-  Serial.println(foundDevices->getCount());
-  Serial.println("Scan done!");
-  pBLEScan->clearResults();  // delete results fromBLEScan buffer to release memory
   delay(2000);
 }
