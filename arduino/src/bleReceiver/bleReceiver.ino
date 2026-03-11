@@ -1,6 +1,8 @@
 /*
    Based on Neil Kolban example for IDF: https://github.com/nkolban/esp32-snippets/blob/master/cpp_utils/tests/BLE%20Tests/SampleScan.cpp
    Ported to Arduino ESP32 by Evandro Copercini
+
+   Original Source for this code: https://github.com/espressif/arduino-esp32/blob/master/libraries/BLE/examples/Scan/Scan.ino
 */
 
 #include <Arduino.h>
@@ -14,12 +16,21 @@ BLEScan *pBLEScan;
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    Serial.printf("Advertised Device: %s \n", advertisedDevice.toString().c_str());
+    if (advertisedDevice.getServiceUUIDCount() <= 0) {
+      return;
+    }
+    Serial.printf("Advertiser: Name=%s | RSSI=%d | UUID=%s | Address=%s \n",
+      advertisedDevice.getName().c_str(), 
+      advertisedDevice.getRSSI(),
+      advertisedDevice.getServiceUUID().toString().c_str(),
+      advertisedDevice.getAddress().toString().c_str()
+    );
   }
 };
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
   Serial.println("Scanning...");
 
   BLEDevice::init("");
