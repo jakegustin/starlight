@@ -155,7 +155,7 @@ class CentralController:
 
         # Unregistered users in an automatic registration should be registered at default priority
         if uuid not in self._users:
-            self._users[uuid] = User(uuid, priority=self._users.get(uuid, 0).priority)
+            self._users[uuid] = User(uuid, priority=self._users.get(uuid, User(uuid)).priority)
 
         return self._users[uuid]
 
