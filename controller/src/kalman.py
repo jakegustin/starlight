@@ -1,5 +1,7 @@
+"""
+Implementation of a 1-D Kalman Filter for the Starlight controller
+"""
 from __future__ import annotations
-
 
 class KalmanFilter:
     """
@@ -9,13 +11,13 @@ class KalmanFilter:
     Attributes
     ----------
     q : float
-        Also known as process noise, or how much to trust new data over existing data. Lower = trust existing values more.
+        Aka process noise: how much to trust new data. Lower = trust existing values more.
     r : float
-        Also known as measurement noise, or how sensitive the filter is before assuming an outlier. Lower = more likely to deem as outlier
+        Aka measurement noise: filter's sensitivity for outlier detection. Lower = more outliers
     x : float
-        Also known as the current state estimate, holding the smooth RSSI value
+        Aka current state estimate, holding the smooth RSSI value
     p : float
-        Also known as the covariance, or uncertainty of `x`. Higher values suggest less confidence
+        Aka covariance, or uncertainty of `x`. Higher values suggest less confidence
     _initialized : bool
         Indicates whether the KalmanFilter is ready for operation
     """
@@ -36,7 +38,7 @@ class KalmanFilter:
     def predict(self) -> tuple[float, float]:
         """
         Provides the current state and the uncertainty tied to that state
-        More precisely for uncertainty, utilize the covariance extrapolation equation to compute estimate variance
+        For uncertainty, utilize covariance extrapolation equation to compute estimate variance
         """
         # Covariance extrapolation formula derived from https://kalmanfilter.net/kalman1d_pn.html
         return self.x, self.p + self.q
@@ -53,10 +55,10 @@ class KalmanFilter:
         x_pred, p_pred = self.predict()
 
         # Formulas derived from https://kalmanfilter.net/kalman1d_pn.html
-        # Compute Kalman Gain from combined process noise & uncertainty, along with measurement variance
+        # Compute Kalman Gain from process noise & uncertainty, along with measurement variance
         k = p_pred / (p_pred + self.r)
 
-        # Compute the new system state from the existing system state, Kalman Gain, and the measured state
+        # Compute new system state from existing system state, Kalman Gain, and the measured state
         self.x = x_pred + k * (measurement - x_pred)
 
         # Compute the new covariance from the Kalman Gain and the existing estimate variance
@@ -71,7 +73,7 @@ class KalmanFilter:
         # First measurement is never considered an outlier
         if not self._initialized:
             return False
-        
+
         x_pred, p_pred = self.predict()
 
         # Get standard deviation of one entry of combined process/measurement noise and covariance

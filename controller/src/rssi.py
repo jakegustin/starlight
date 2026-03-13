@@ -1,3 +1,6 @@
+"""
+Maintains a moving average RSSI buffer for the Starlight controller
+"""
 from __future__ import annotations
 
 from .kalman import KalmanFilter

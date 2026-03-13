@@ -1,3 +1,6 @@
+"""
+The central controller of the Starlight system, ingesting serial data updating queue state.
+"""
 from __future__ import annotations
 
 from .src.core import CentralController

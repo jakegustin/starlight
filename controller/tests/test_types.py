@@ -1,3 +1,6 @@
+"""
+Unit tests for the ZoneEvent class of the Starlight controller
+"""
 from __future__ import annotations
 
 import pytest

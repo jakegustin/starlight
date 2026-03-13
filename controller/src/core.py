@@ -1,3 +1,6 @@
+"""
+Core functionality of Starlight controller, updating state and registering users
+"""
 from __future__ import annotations
 
 import json
@@ -26,11 +29,11 @@ class CentralController:
     window_size : int
         How many RSSI readings to contain in a rolling window when averaging
     kalman_process_noise : float
-        KalmanFilter: How much to trust new data over existing data. Lower = trust existing values more
+        How much to trust new data over existing data. Lower = trust existing values more
     kalman_measurement_noise : float
-        KalmanFilter: How sensitive the filter is before assuming an outlier. Lower = more likely to deem as outlier
+        The filter's sensitivity for identifying outliers. Lower = more likely to deem as outlier
     kalman_gate_threshold : float
-        KalmanFilter: The number of standard deviations difference needed for a measurement to be deemed an outlier
+        The number of standard deviations difference needed for measurements to be deemed outliers
     _users : dict[str, User]
         A mapping of user UUIDs to User instances
     _zone_active : dict[str, Optional[str]]
@@ -162,12 +165,12 @@ class CentralController:
         """
         Fetch the User instance for a given UUID, or indicate that the user does not exist!
         """
-        # If the user isn't registered and manual registration is needed, don't allow them to manipulate the zones!
+        # Unregistered users in a manual registration system should not manipulate the zones!
         if uuid not in self._users and not self.automatic_registration:
             return None
-        
-        # If the user isn't registered, but automatic registration is allowed, register them at default priority
-        elif uuid not in self._users:
+
+        # Unregistered users in an automatic registration should be registered at default priority
+        if uuid not in self._users:
             self._users[uuid] = User(uuid, priority=self._priority_map.get(uuid, 0))
 
         return self._users[uuid]
@@ -220,12 +223,12 @@ class CentralController:
 
     def _check_exit_last_zone(self, user: User, ts: float) -> ZoneEvents:
         """
-        If user's current zone is the last zone, and signal strength is low, remove them from the queue
+        Remove a user from the queue they were in the last zone and signal strength is low
         """
         events: ZoneEvents = []
         if user.current_zone is None:
             return events
-        
+
         idx = self._zone_index(user.current_zone)
 
         # Confirm the user is in the last zone
