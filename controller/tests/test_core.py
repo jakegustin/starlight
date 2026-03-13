@@ -4,11 +4,13 @@ Unit tests for the CentralController class of the Starlight controller
 from __future__ import annotations
 
 import json
-
 import pytest
 
 from controller import CentralController
 
+# pylint: disable=too-many-public-methods
+# We're disabling this linter warning here since a unit test file typically does not
+# need to worry about the number of public methods unlike a proper class
 
 class TestCentralController:
     """
@@ -23,13 +25,8 @@ class TestCentralController:
         """
         defaults = {
             "zone_order": self.ZONES,
-            "rssi_entry_threshold": 30.0,
-            "rssi_exit_threshold": 10.0,
             "timeout_seconds": 5.0,
             "window_size": 3,
-            "kalman_process_noise": 1.0,
-            "kalman_measurement_noise": 5.0,
-            "kalman_gate_threshold": 100.0 # Very high gate to avoid Kalman interference
         }
         defaults.update(kw)
         return CentralController(**defaults) # Note the usage of ** for kwargs
@@ -91,7 +88,7 @@ class TestCentralController:
         """
         Ensure that RSSI transmissions below the minimum threshold do not update the user's zone
         """
-        ctrl = self._create_controller()
+        ctrl = self._create_controller() # Default RSSI entry threshold is 30
         ctrl.register_user("u1")
         events = []
         for i in range(5):

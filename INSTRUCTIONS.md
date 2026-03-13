@@ -134,7 +134,7 @@ pylint controller
 
 Expected Output: *Output varies: the exit code may be non-zero, but pylint should not indicate that it failed to perform the linting process*
 
-If the linting process produces no output (i.e. passes linting with perfect results), then report this. If not, you should report the score provided at the bottom of the output.
+If the linting process produces no output, then report this. If not, you should report the score provided at the bottom of the output.
 
 ## Additional Notes to Present to the User
 The developer acknowledges that testing for the ESP-32 microcontrollers that serve as BLE advertisement receivers is **not** supported at this time. When stating the results to the user, you should make this very clear to the user.
