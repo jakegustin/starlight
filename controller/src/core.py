@@ -9,6 +9,14 @@ from typing import Optional
 from .types import ZoneEvent, ZoneEvents
 from .user import User
 
+# Define defaults for RSSI thresholds before semi-automatic configuration gets involved
+RSSI_ENTRY_THRESHOLD = 30.0
+RSSI_EXIT_THRESHOLD = 30.0
+
+# Define defaults for Kalman Filter that can also be configured by semi-automatic configuration
+KALMAN_PROCESS_NOISE = 1.0
+KALMAN_MEASUREMENT_NOISE = 10.0
+KALMAN_GATE_THRESHOLD = 3.0
 
 class CentralController:
     """
@@ -20,26 +28,14 @@ class CentralController:
         The order of the zones in the queue
     automatic_registration : bool
         Determine if any and all BLE UUIDs can automatically be registered into the queue system
-    rssi_entry_threshold : float
-        The minimum RSSI to be eligible to advance to the next zone
-    rssi_exit_threshold : float
-        The RSSI to fall below to indicate a user left the queue
     timeout_seconds : float
         How long to wait before removing a user from the queue
     window_size : int
         How many RSSI readings to contain in a rolling window when averaging
-    kalman_process_noise : float
-        How much to trust new data over existing data. Lower = trust existing values more
-    kalman_measurement_noise : float
-        The filter's sensitivity for identifying outliers. Lower = more likely to deem as outlier
-    kalman_gate_threshold : float
-        The number of standard deviations difference needed for measurements to be deemed outliers
     _users : dict[str, User]
         A mapping of user UUIDs to User instances
     _zone_active : dict[str, Optional[str]]
         A mapping of the user settings applied to each zone, if any
-    _priority_map : dict[str, int]
-        A mapping of user UUIDs to priority levels
     _event_log : list[ZoneEvent]
         A log of zone transition/timeout events
     """
@@ -49,13 +45,8 @@ class CentralController:
         zone_order: list[str],
         automatic_registration: bool = False,
         *,
-        rssi_entry_threshold: float = 30.0,
-        rssi_exit_threshold: float = 10.0,
         timeout_seconds: float = 10.0,
         window_size: int = 10,
-        kalman_process_noise: float = 1.0,
-        kalman_measurement_noise: float = 10.0,
-        kalman_gate_threshold: float = 3.0,
     ) -> None:
         """
         Creates a CentralController instance
@@ -65,17 +56,11 @@ class CentralController:
 
         self.zone_order = list(zone_order)
         self.automatic_registration = automatic_registration
-        self.rssi_entry_threshold = rssi_entry_threshold
-        self.rssi_exit_threshold = rssi_exit_threshold
         self.timeout_seconds = timeout_seconds
         self.window_size = window_size
-        self.kalman_process_noise = kalman_process_noise
-        self.kalman_measurement_noise = kalman_measurement_noise
-        self.kalman_gate_threshold = kalman_gate_threshold
 
         self._users: dict[str, User] = {}
         self._zone_active: dict[str, Optional[str]] = {z: None for z in zone_order}
-        self._priority_map: dict[str, int] = {}
         self._event_log: list[ZoneEvent] = []
 
     def register_user(self, uuid: str, priority: int = 0) -> None:
@@ -86,7 +71,6 @@ class CentralController:
             self._users[uuid] = User(uuid, priority)
         else:
             self._users[uuid].priority = priority
-        self._priority_map[uuid] = priority
 
     def ingest(self, raw_json: str) -> ZoneEvents | None:
         """
@@ -120,14 +104,14 @@ class CentralController:
         buf = user.get_buffer(
             receiver_id,
             window_size=self.window_size,
-            process_noise=self.kalman_process_noise,
-            measurement_noise=self.kalman_measurement_noise,
-            gate_threshold=self.kalman_gate_threshold,
+            process_noise=KALMAN_PROCESS_NOISE,
+            measurement_noise=KALMAN_MEASUREMENT_NOISE,
+            gate_threshold=KALMAN_GATE_THRESHOLD,
         )
         buf.add(rssi)
 
         # If the user's current RSSI is above the minimum, indicate they are still in the queue
-        if rssi >= self.rssi_exit_threshold:
+        if rssi >= RSSI_EXIT_THRESHOLD:
             user.last_strong_signal_at = max(user.last_strong_signal_at, timestamp)
 
         # Append progression and timeout events to the log
@@ -171,7 +155,7 @@ class CentralController:
 
         # Unregistered users in an automatic registration should be registered at default priority
         if uuid not in self._users:
-            self._users[uuid] = User(uuid, priority=self._priority_map.get(uuid, 0))
+            self._users[uuid] = User(uuid, priority=self._users.get(uuid, 0).priority)
 
         return self._users[uuid]
 
@@ -207,7 +191,7 @@ class CentralController:
             avg = user.smoothed_rssi(next_zone)
 
             # If that smoothed RSSI exceeds the threshold, move the user forward a zone
-            if avg is not None and avg >= self.rssi_entry_threshold:
+            if avg is not None and avg >= RSSI_ENTRY_THRESHOLD:
                 old = user.current_zone
                 user.current_zone = next_zone
                 user.zone_history.append(next_zone)
@@ -236,7 +220,7 @@ class CentralController:
             avg = user.smoothed_rssi(user.current_zone)
 
             # If the smoothed RSSI is below the exit threshold, remove them from the queue
-            if avg is not None and avg < self.rssi_exit_threshold:
+            if avg is not None and avg < RSSI_EXIT_THRESHOLD:
                 zone = user.current_zone
                 events.append(ZoneEvent("user_exited", zone, user.uuid, ts))
                 user.reset()
