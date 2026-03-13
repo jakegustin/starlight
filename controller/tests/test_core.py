@@ -1,3 +1,6 @@
+"""
+Unit tests for the CentralController class of the Starlight controller
+"""
 from __future__ import annotations
 
 import json
@@ -18,16 +21,16 @@ class TestCentralController:
         """
         Create a controller with known defaults
         """
-        defaults = dict(
-            zone_order=self.ZONES,
-            rssi_entry_threshold=30.0,
-            rssi_exit_threshold=10.0,
-            timeout_seconds=5.0,
-            window_size=3,
-            kalman_process_noise=1.0,
-            kalman_measurement_noise=5.0,
-            kalman_gate_threshold=100.0, # Very high gate to avoid Kalman interference
-        )
+        defaults = {
+            "zone_order": self.ZONES,
+            "rssi_entry_threshold": 30.0,
+            "rssi_exit_threshold": 10.0,
+            "timeout_seconds": 5.0,
+            "window_size": 3,
+            "kalman_process_noise": 1.0,
+            "kalman_measurement_noise": 5.0,
+            "kalman_gate_threshold": 100.0 # Very high gate to avoid Kalman interference
+        }
         defaults.update(kw)
         return CentralController(**defaults) # Note the usage of ** for kwargs
 
@@ -99,7 +102,7 @@ class TestCentralController:
 
     def test_advance_to_second_zone(self):
         """
-        Ensure the system correctly advances the user to the upcoming zone (and leaves the existing zone)
+        Ensure the system advances the user to the upcoming zone (and leaves the existing zone)
         """
         ctrl = self._create_controller()
         ctrl.register_user("u1")
@@ -381,7 +384,7 @@ class TestCentralController:
 
     def test_event_log_is_defensive_copy(self):
         """
-        Ensure that accessing the event log provides a copy of the log to avoid internal state changes
+        Ensure accessing the event log provides a copy of the log to avoid internal state changes
         """
         ctrl = self._create_controller()
         ctrl.register_user("u1", 1)
@@ -393,7 +396,7 @@ class TestCentralController:
 
     def test_get_user_returns_none_for_unknown(self):
         """
-        Ensure that attempting to retrieve a user unknown to the system yields None for error-checking
+        Ensure attempts to retrieve a user unknown to the system yields None for error-checking
         """
         ctrl = self._create_controller()
         assert ctrl.get_user("nonexistent") is None

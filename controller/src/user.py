@@ -1,3 +1,9 @@
+"""
+Implementation of the User class in the Starlight central controller
+
+Tracks a user's current zone and their RSSI readings
+"""
+
 from __future__ import annotations
 from typing import Any
 from .rssi import RSSIBuffer

@@ -1,6 +1,7 @@
+"""
+Unit tests for the KalmanFilter class of the Starlight controller
+"""
 from __future__ import annotations
-
-import pytest
 
 from controller import KalmanFilter
 
@@ -81,7 +82,7 @@ class TestKalmanFilter:
 
     def test_predict_returns_state_and_covariance(self):
         """
-        Confirm the initial state matches the sole value and the predicted error is computed correctly
+        Confirm initial state matches the sole value and the predicted error is computed correctly
         """
         kf = KalmanFilter(process_noise=2.0)
         kf.update(10.0)

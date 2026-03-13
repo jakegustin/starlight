@@ -1,3 +1,6 @@
+"""
+Unit tests for the User class of the Starlight controller
+"""
 from __future__ import annotations
 
 import pytest
@@ -16,7 +19,7 @@ class TestUser:
         assert u.uuid == "uuid-1"
         assert u.priority == 0
         assert u.current_zone is None
-        assert u.zone_history == []
+        assert not u.zone_history
 
     def test_priority_assignment(self):
         """
@@ -64,7 +67,7 @@ class TestUser:
         u.reset()
 
         assert u.current_zone is None
-        assert u.zone_history == []
+        assert not u.zone_history
         assert buf.count == 0
 
     def test_repr(self):

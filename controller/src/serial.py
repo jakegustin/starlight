@@ -1,6 +1,10 @@
+"""
+Handles serial connectivity and ingestion for the Starlight controller
+"""
 from __future__ import annotations
 
 from typing import Any
+import serial
 
 from .core import CentralController
 from .types import ZoneEvents
@@ -39,7 +43,6 @@ class SerialIngester:
         """
         Opens the serial connection specified by the instance attributes
         """
-        import serial
         self._serial = serial.Serial(self.port, self.baudrate, timeout=1)
 
     def close(self) -> None:
