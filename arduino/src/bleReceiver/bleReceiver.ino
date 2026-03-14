@@ -11,7 +11,10 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
-int scanTime = 5;  //In seconds
+#define MAX_UUIDS 128
+#define RECEIVER_NAME "Receiver A"
+
+char validUUIDs[MAX_UUIDS][37]; // 37 chars in UUID, including null terminator
 BLEScan *pBLEScan;
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
@@ -20,15 +23,26 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       return;
     }
 
-    const char* name = advertisedDevice.haveName() ? advertisedDevice.getName().c_str() : "unknown";
-    Serial.print("Advertiser: ");
-    Serial.print(name);
-    Serial.print(" | RSSI=");
-    Serial.print(advertisedDevice.getRSSI());
-    Serial.print(" | UUID=");
-    Serial.print(advertisedDevice.getServiceUUID().toString().c_str());
-    Serial.print(" | Address=");
-    Serial.println(advertisedDevice.getAddress().toString().c_str());
+    // Cache the UUID string (avoid calling toString().c_str() multiple times on a temporary)
+    String uuid = advertisedDevice.getServiceUUID().toString();
+    if (strcmp(uuid.c_str(), "12345678-1234-1234-1234-12345678abcd") != 0) {
+      return;
+    }
+
+    const char* deviceName = advertisedDevice.haveName() ? advertisedDevice.getName().c_str() : "unknown";
+    char buf[256];
+    int len = snprintf(
+        buf, sizeof(buf),
+        "{\"id\":\"%s\",\"type\":\"data\",\"devicename\":\"%s\",\"rssi\":%d,\"uuid\":\"%s\"}\n",
+        RECEIVER_NAME,
+        deviceName,
+        advertisedDevice.getRSSI(),
+        uuid.c_str()
+    );
+
+    if (len > 0 && len < (int)sizeof(buf)) {
+      Serial.write((uint8_t*)buf, len);
+    }
   }
 };
 
@@ -44,9 +58,12 @@ void setup() {
   pBLEScan->setInterval(100);
   pBLEScan->setWindow(99);  // less or equal setInterval value
 
-  pBLEScan->start(0, false);
+  pBLEScan->start(0, nullptr);
 }
 
 void loop() {
-  delay(2000);
+  delay(5000);
+  Serial.printf("{\"id\": \"%s\", \"type\": \"heartbeat\"}\n",
+        RECEIVER_NAME
+  );
 }
