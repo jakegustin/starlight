@@ -8,6 +8,7 @@ from .src.kalman import KalmanFilter
 from .src.rssi import RSSIBuffer
 from .src.user import User
 from .src.types import ZoneEvent, ZoneEvents
+from .src.serial_mux import MultiSerialIngester
 
 __all__ = [
     "CentralController",
@@ -16,4 +17,5 @@ __all__ = [
     "User",
     "ZoneEvent",
     "ZoneEvents",
+    "MultiSerialIngester",
 ]

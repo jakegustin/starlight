@@ -4,19 +4,11 @@ Core functionality of Starlight controller, updating state and registering users
 from __future__ import annotations
 
 import json
+import time
 from typing import Optional
 
 from .types import ZoneEvent, ZoneEvents
 from .user import User
-
-# Define defaults for RSSI thresholds before semi-automatic configuration gets involved
-RSSI_ENTRY_THRESHOLD = 30.0
-RSSI_EXIT_THRESHOLD = 30.0
-
-# Define defaults for Kalman Filter that can also be configured by semi-automatic configuration
-KALMAN_PROCESS_NOISE = 1.0
-KALMAN_MEASUREMENT_NOISE = 10.0
-KALMAN_GATE_THRESHOLD = 3.0
 
 class CentralController:
     """
@@ -32,6 +24,18 @@ class CentralController:
         How long to wait before removing a user from the queue
     window_size : int
         How many RSSI readings to contain in a rolling window when averaging
+    rssi_entry_threshold : float
+        Minimum RSSI difference for a user to be eligible to move into the next zone
+    rssi_exit_threshold : float
+        The RSSI value that an advertiser must drop below to be considered as having left the queue
+    process_noise : float
+        For KalmanFilter: how much to trust new data. Lower = trust existing values more
+    measurement_noise : float
+        For KalmanFilter: filter's sensitivity for outlier detection. Lower = more outliers
+    gate_threshold : float
+        For KalmanFilter: Number of standard deviations difference consider a data point an outlier
+    allow_dynamic_zones : bool
+        Indicates whether the zone_order should be updated dynamically as receivers are detected
     _users : dict[str, User]
         A mapping of user UUIDs to User instances
     _zone_active : dict[str, Optional[str]]
@@ -47,17 +51,29 @@ class CentralController:
         *,
         timeout_seconds: float = 10.0,
         window_size: int = 10,
+        rssi_entry_threshold: float = 30.0,
+        rssi_exit_threshold: float = 30.0,
+        process_noise: float = 1.0,
+        measurement_noise: float = 10.0,
+        gate_threshold: float = 3.0,
+        allow_dynamic_zones: bool = False,
     ) -> None:
         """
         Creates a CentralController instance
         """
-        if not zone_order:
+        if not zone_order and not allow_dynamic_zones:
             raise ValueError("zone_order must contain at least one zone")
 
         self.zone_order = list(zone_order)
         self.automatic_registration = automatic_registration
         self.timeout_seconds = timeout_seconds
         self.window_size = window_size
+        self.rssi_entry_threshold = rssi_entry_threshold
+        self.rssi_exit_threshold = rssi_exit_threshold
+        self.process_noise = process_noise
+        self.measurement_noise = measurement_noise
+        self.gate_threshold = gate_threshold
+        self.allow_dynamic_zones = allow_dynamic_zones
 
         self._users: dict[str, User] = {}
         self._zone_active: dict[str, Optional[str]] = {z: None for z in zone_order}
@@ -72,16 +88,43 @@ class CentralController:
         else:
             self._users[uuid].priority = priority
 
+    def add_zone(self, zone_id: str) -> None:
+        """Add a zone to the controller if it does not already exist."""
+        if zone_id not in self.zone_order:
+            self.zone_order.append(zone_id)
+            self._zone_active[zone_id] = None
+
     def ingest(self, raw_json: str) -> ZoneEvents | None:
         """
         Ingests a raw JSON output provided by a BLE receiver
         """
         data = json.loads(raw_json)
+
+        # We can ignore heartbeat messages for now
+        if data.get("type") == "heartbeat":
+            print("[CentralController] Discarding heartbeat message")
+            return
+        
+        if data.get("type") != "data":
+            print("[CentralController] Got unknown message type", data.get("type"))
+            return
+        
+        receiver_id = data.get("id")
+        uuid = data.get("uuid")
+        rssi = data.get("rssi")
+
+        if receiver_id is None or uuid is None or rssi is None:
+            # If required fields are missing, just forget about it
+            return None
+
+        # Use the controller's local time as our ground truth
+        timestamp = time.time()
+
         return self.ingest_reading(
-            receiver_id=data["BLE_RECEIVER_ID"],
-            timestamp=data["TIMESTAMP"],
-            uuid=data["BLE_UUID"],
-            rssi=data["RSSI"],
+            receiver_id=str(receiver_id),
+            timestamp=timestamp,
+            uuid=str(uuid),
+            rssi=float(rssi),
         )
 
     def ingest_reading(
@@ -104,14 +147,14 @@ class CentralController:
         buf = user.get_buffer(
             receiver_id,
             window_size=self.window_size,
-            process_noise=KALMAN_PROCESS_NOISE,
-            measurement_noise=KALMAN_MEASUREMENT_NOISE,
-            gate_threshold=KALMAN_GATE_THRESHOLD,
+            process_noise=self.process_noise,
+            measurement_noise=self.measurement_noise,
+            gate_threshold=self.gate_threshold,
         )
         buf.add(rssi)
 
         # If the user's current RSSI is above the minimum, indicate they are still in the queue
-        if rssi >= RSSI_EXIT_THRESHOLD:
+        if rssi >= self.rssi_exit_threshold:
             user.last_strong_signal_at = max(user.last_strong_signal_at, timestamp)
 
         # Append progression and timeout events to the log
@@ -163,6 +206,13 @@ class CentralController:
         """
         Get the index within zone_order corresponding to a given zone ID
         """
+        # If dynamic zones are allowed, add the zone to the list
+        if zone_id not in self.zone_order:
+            if not self.allow_dynamic_zones:
+                raise ValueError(f"Unknown zone '{zone_id}'")
+            self.zone_order.append(zone_id)
+            self._zone_active[zone_id] = None
+
         return self.zone_order.index(zone_id)
 
     def _evaluate_progression(self, user: User, ts: float) -> ZoneEvents:
@@ -191,7 +241,7 @@ class CentralController:
             avg = user.smoothed_rssi(next_zone)
 
             # If that smoothed RSSI exceeds the threshold, move the user forward a zone
-            if avg is not None and avg >= RSSI_ENTRY_THRESHOLD:
+            if avg is not None and avg >= self.rssi_entry_threshold:
                 old = user.current_zone
                 user.current_zone = next_zone
                 user.zone_history.append(next_zone)
@@ -220,7 +270,7 @@ class CentralController:
             avg = user.smoothed_rssi(user.current_zone)
 
             # If the smoothed RSSI is below the exit threshold, remove them from the queue
-            if avg is not None and avg < RSSI_EXIT_THRESHOLD:
+            if avg is not None and avg < self.rssi_exit_threshold:
                 zone = user.current_zone
                 events.append(ZoneEvent("user_exited", zone, user.uuid, ts))
                 user.reset()

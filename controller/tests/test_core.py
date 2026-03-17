@@ -38,10 +38,10 @@ class TestCentralController:
         """
         return json.dumps(
             {
-                "BLE_RECEIVER_ID": receiver,
-                "TIMESTAMP": ts,
-                "BLE_UUID": uuid,
-                "RSSI": rssi,
+                "id": receiver,
+                "ts": ts,
+                "uuid": uuid,
+                "rssi": rssi,
             }
         )
 
