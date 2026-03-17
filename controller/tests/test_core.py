@@ -397,3 +397,15 @@ class TestCentralController:
         """
         ctrl = self._create_controller()
         assert ctrl.get_user("nonexistent") is None
+
+    def test_set_zone_order_reorders_existing_zones(self):
+        """Ensure zone order can be changed for configuration use-cases."""
+        ctrl = self._create_controller(zone_order=["a", "b", "c"])
+        updated = ctrl.set_zone_order(["c", "a", "b"])
+        assert updated == ["c", "a", "b"]
+
+    def test_set_zone_order_ignores_unknown_and_keeps_unlisted(self):
+        """Ensure unknown ids are ignored and missing zones are preserved by default."""
+        ctrl = self._create_controller(zone_order=["a", "b", "c"])
+        updated = ctrl.set_zone_order(["x", "c"])
+        assert updated == ["c", "a", "b"]

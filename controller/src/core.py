@@ -4,6 +4,7 @@ Core functionality of Starlight controller, updating state and registering users
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Optional
 
@@ -74,6 +75,7 @@ class CentralController:
         self.measurement_noise = measurement_noise
         self.gate_threshold = gate_threshold
         self.allow_dynamic_zones = allow_dynamic_zones
+        self._lock = threading.RLock()
 
         self._users: dict[str, User] = {}
         self._zone_active: dict[str, Optional[str]] = {z: None for z in zone_order}
@@ -89,10 +91,50 @@ class CentralController:
             self._users[uuid].priority = priority
 
     def add_zone(self, zone_id: str) -> None:
-        """Add a zone to the controller if it does not already exist."""
-        if zone_id not in self.zone_order:
-            self.zone_order.append(zone_id)
-            self._zone_active[zone_id] = None
+        """
+        Add a zone to the controller if it does not already exist
+        """
+        with self._lock:
+            if zone_id not in self.zone_order:
+                self.zone_order.append(zone_id)
+                self._zone_active[zone_id] = None
+
+    def set_zone_order(self, zone_order: list[str], *, keep_unlisted: bool = True) -> list[str]:
+        """
+        Manually reorder zones and return the updated order.
+        """
+        with self._lock:
+            # Initialize variables
+            seen: set[str] = set()
+            requested = [z for z in zone_order if z and not (z in seen or seen.add(z))]
+
+            # Get the existing receivers and the desired receiver order
+            existing = set(self.zone_order)
+            reordered = [z for z in requested if z in existing]
+
+            # If no position specified, just append it to the end
+            if keep_unlisted:
+                reordered.extend(z for z in self.zone_order if z not in reordered)
+
+            # If dynamic scanning not enabled and no zones identified, issue an error
+            if not reordered and not self.allow_dynamic_zones:
+                raise ValueError("zone_order must contain at least one known zone")
+
+            # Update the zone order, including active zones
+            self.zone_order = reordered
+            self._zone_active = {z: self._zone_active.get(z) for z in self.zone_order}
+
+            return list(self.zone_order)
+
+    def snapshot(self) -> dict[str, object]:
+        """
+        Return a thread-safe snapshot of controller state for UIs
+        """
+        with self._lock:
+            return {
+                "zone_order": list(self.zone_order),
+                "zone_active": dict(self._zone_active),
+            }
 
     def ingest(self, raw_json: str) -> ZoneEvents | None:
         """
@@ -103,12 +145,12 @@ class CentralController:
         # We can ignore heartbeat messages for now
         if data.get("type") == "heartbeat":
             print("[CentralController] Discarding heartbeat message")
-            return
-        
+            return None
+
         if data.get("type") != "data":
             print("[CentralController] Got unknown message type", data.get("type"))
-            return
-        
+            return None
+
         receiver_id = data.get("id")
         uuid = data.get("uuid")
         rssi = data.get("rssi")
@@ -210,8 +252,7 @@ class CentralController:
         if zone_id not in self.zone_order:
             if not self.allow_dynamic_zones:
                 raise ValueError(f"Unknown zone '{zone_id}'")
-            self.zone_order.append(zone_id)
-            self._zone_active[zone_id] = None
+            self.add_zone(zone_id)
 
         return self.zone_order.index(zone_id)
 

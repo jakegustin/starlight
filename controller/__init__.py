@@ -9,6 +9,7 @@ from .src.rssi import RSSIBuffer
 from .src.user import User
 from .src.types import ZoneEvent, ZoneEvents
 from .src.serial_mux import MultiSerialIngester
+from .src.config_ui import ReceiverConfigServer
 
 __all__ = [
     "CentralController",
@@ -18,4 +19,5 @@ __all__ = [
     "ZoneEvent",
     "ZoneEvents",
     "MultiSerialIngester",
+    "ReceiverConfigServer",
 ]

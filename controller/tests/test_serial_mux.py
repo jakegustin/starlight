@@ -23,6 +23,8 @@ class _FakeController:
 class _DummySerial:
     """A simple fake `serial.Serial` context manager."""
 
+    writes_by_port: dict[str, list[str]] = {}
+
     def __init__(self, port: str, baudrate: int, timeout: float) -> None:
         self.port = port
         self.baudrate = baudrate
@@ -54,6 +56,11 @@ class _DummySerial:
         data, self._buffer = self._buffer[:size], self._buffer[size:]
         return data
 
+    def write(self, data: bytes) -> int:
+        text = data.decode("utf-8", errors="replace")
+        self.writes_by_port.setdefault(self.port, []).append(text)
+        return len(data)
+
     @property
     def in_waiting(self) -> int:
         return len(self._buffer)
@@ -62,6 +69,8 @@ class _DummySerial:
 @pytest.fixture(autouse=True)
 def patch_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch serial.Serial and os.path.exists to support fake ports."""
+
+    _DummySerial.writes_by_port = {}
 
     class DummySerialModule:
         Serial = _DummySerial
@@ -242,3 +251,115 @@ def test_invalid_json_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert any("/dev/tty.X" in line for line in fake.ingested)
     assert all("not json" not in line for line in fake.ingested)
+
+
+def test_receiver_status_transitions_online_to_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure discovered receiver state reflects unplug/removal events."""
+    fake = _FakeController()
+
+    calls = {"n": 0}
+
+    def _glob(pattern: str) -> list[str]:
+        calls["n"] += 1
+        if calls["n"] < 4:
+            return ["/dev/tty.Z"]
+        return []
+
+    monkeypatch.setattr("controller.src.serial_mux.glob.glob", _glob)
+
+    class HeartbeatOnceSerial(_DummySerial):
+        def __init__(self, port: str, baudrate: int, timeout: float) -> None:
+            super().__init__(port, baudrate, timeout)
+            self._lines = [b"{\"id\":\"receiver-z\", \"type\": \"heartbeat\"}\n"]
+
+    monkeypatch.setattr("controller.src.serial_mux.serial.Serial", HeartbeatOnceSerial)
+
+    ingester = MultiSerialIngester(
+        controller=fake,
+        ports=[],
+        scan_ports=True,
+        scan_patterns=["/dev/tty.*"],
+        scan_interval=0.01,
+    )
+
+    t = threading.Thread(target=ingester.run_forever, daemon=True)
+    t.start()
+
+    # Wait until the heartbeat has been observed.
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        states = {s["id"]: s for s in ingester.get_receiver_statuses()}
+        if states.get("receiver-z", {}).get("online") is True:
+            break
+        time.sleep(0.01)
+
+    states = {s["id"]: s for s in ingester.get_receiver_statuses()}
+    assert states["receiver-z"]["online"] is True
+
+    # Wait for scanner to stop seeing the port and mark it offline.
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        states = {s["id"]: s for s in ingester.get_receiver_statuses()}
+        if states.get("receiver-z", {}).get("online") is False:
+            break
+        time.sleep(0.01)
+
+    states = {s["id"]: s for s in ingester.get_receiver_statuses()}
+    assert states["receiver-z"]["online"] is False
+
+    ingester.stop()
+    t.join(timeout=1)
+
+
+def test_request_receiver_blink_sends_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure blink commands are written to the serial port for an online receiver."""
+    fake = _FakeController()
+
+    monkeypatch.setattr("controller.src.serial_mux.glob.glob", lambda pattern: ["/dev/tty.B"]) 
+
+    class HeartbeatSerial(_DummySerial):
+        def __init__(self, port: str, baudrate: int, timeout: float) -> None:
+            super().__init__(port, baudrate, timeout)
+            self._lines = [b"{\"id\":\"receiver-b\", \"type\": \"heartbeat\"}\n"]
+
+    monkeypatch.setattr("controller.src.serial_mux.serial.Serial", HeartbeatSerial)
+
+    ingester = MultiSerialIngester(
+        controller=fake,
+        ports=[],
+        scan_ports=True,
+        scan_patterns=["/dev/tty.*"],
+        scan_interval=0.01,
+    )
+
+    t = threading.Thread(target=ingester.run_forever, daemon=True)
+    t.start()
+
+    deadline = time.time() + 1.0
+    state = {}
+    while time.time() < deadline:
+        state = {s["id"]: s for s in ingester.get_receiver_statuses()}
+        if "receiver-b" in state:
+            break
+        time.sleep(0.01)
+
+    assert "receiver-b" in state, "Receiver was never discovered"
+
+    assert ingester.request_receiver_blink("receiver-b")
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        writes = []
+        for port_writes in _DummySerial.writes_by_port.values():
+            writes.extend(port_writes)
+        if any('"command": "blink"' in line for line in writes):
+            break
+        time.sleep(0.01)
+
+    writes = []
+    for port_writes in _DummySerial.writes_by_port.values():
+        writes.extend(port_writes)
+    assert any('"command": "blink"' in line for line in writes)
+
+    ingester.stop()
+    t.join(timeout=1)

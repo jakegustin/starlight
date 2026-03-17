@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 
 from controller import CentralController
+from controller.src.config_ui import ReceiverConfigServer
 from controller.src.serial_mux import MultiSerialIngester
 
 
@@ -64,6 +65,22 @@ def main() -> None:
         action="store_true",
         help="Enable verbose logging about detected ports and received lines.",
     )
+    parser.add_argument(
+        "--config-ui",
+        action="store_true",
+        help="Start a local web UI to view online receivers and reorder zones.",
+    )
+    parser.add_argument(
+        "--config-ui-host",
+        default="127.0.0.1",
+        help="Host/IP for the configuration UI server. Default is 127.0.0.1",
+    )
+    parser.add_argument(
+        "--config-ui-port",
+        type=int,
+        default=5253,
+        help="Port for the configuration UI server. Default is 5253",
+    )
 
     args = parser.parse_args()
 
@@ -114,7 +131,23 @@ def main() -> None:
         verbose=args.verbose,
     )
 
-    mux.run_forever()
+    ui_server: ReceiverConfigServer | None = None
+    if args.config_ui:
+        ui_server = ReceiverConfigServer(
+            controller=controller,
+            ingester=mux,
+            host=args.config_ui_host,
+            port=args.config_ui_port,
+        )
+        ui_server.start()
+        host, port = ui_server.address()
+        print(f"Config UI running at http://{host}:{port}")
+
+    try:
+        mux.run_forever()
+    finally:
+        if ui_server is not None:
+            ui_server.stop()
 
 if __name__ == "__main__":
     main()
