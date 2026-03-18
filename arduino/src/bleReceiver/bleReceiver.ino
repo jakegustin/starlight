@@ -148,13 +148,11 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       return;
     }
 
-    const char* deviceName = advertisedDevice.haveName() ? advertisedDevice.getName().c_str() : "unknown";
     char buf[256];
     int len = snprintf(
         buf, sizeof(buf),
-        "{\"id\":\"%s\",\"type\":\"data\",\"devicename\":\"%s\",\"rssi\":%d,\"uuid\":\"%s\"}\n",
+        "{\"id\":\"%s\",\"type\":\"data\",\"rssi\":%d,\"uuid\":\"%s\"}\n",
         RECEIVER_NAME,
-        deviceName,
         advertisedDevice.getRSSI(),
         uuid.c_str()
     );

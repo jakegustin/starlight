@@ -6,155 +6,35 @@ import json
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from .core import CentralController
 from .serial_mux import MultiSerialIngester
 
 
-_PAGE = """<!doctype html>
-<html lang=\"en\">
-  <head>
-    <meta charset=\"utf-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>Starlight Receiver Config</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
-      .wrap { max-width: 760px; margin: 1.5rem auto; padding: 0 1rem; }
-      h1 { margin: 0 0 .5rem; }
-      .muted { color: #94a3b8; margin-bottom: 1rem; }
-      .card { background: #111827; border: 1px solid #334155; border-radius: 10px; padding: 1rem; }
-      ul { list-style: none; margin: 0; padding: 0; }
-      li { display: grid; grid-template-columns: auto 1fr auto auto auto; gap: .5rem; align-items: center; padding: .55rem 0; border-bottom: 1px solid #1e293b; }
-      li:last-child { border-bottom: 0; }
-      .dot { width: .65rem; height: .65rem; border-radius: 999px; display: inline-block; }
-      .on { background: #22c55e; }
-      .off { background: #ef4444; }
-      button { background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 8px; padding: .4rem .7rem; cursor: pointer; }
-      button:hover { background: #334155; }
-      .save { margin-top: .8rem; background: #2563eb; border-color: #3b82f6; }
-      .save:hover { background: #1d4ed8; }
-      .tiny { font-size: .85rem; color: #94a3b8; }
-      .ok { color: #22c55e; }
-      .err { color: #f87171; }
-    </style>
-  </head>
-  <body>
-    <div class=\"wrap\">
-      <h1>Receiver Configuration</h1>
-      <div class=\"muted\">Online status updates automatically. Reorder updates are saved immediately.</div>
-      <div class=\"card\">
-        <ul id=\"list\"></ul>
-        <div id=\"msg\" class=\"tiny\" style=\"margin-top:.5rem\"></div>
-      </div>
-    </div>
-    <script>
-      let zoneOrder = [];
-      let statusById = {};
-      let saveTimer = null;
-      let saveInFlight = false;
+_WEB_DIR = Path(__file__).with_name("config_ui_web")
 
-      function move(idx, delta) {
-        const j = idx + delta;
-        if (j < 0 || j >= zoneOrder.length) return;
-        [zoneOrder[idx], zoneOrder[j]] = [zoneOrder[j], zoneOrder[idx]];
-        render();
-        scheduleSave();
-      }
 
-      function scheduleSave() {
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-          save().catch(() => {});
-        }, 150);
-      }
+def _asset_path(name: str) -> Path:
+    """Return the absolute path to a bundled web asset."""
+    return _WEB_DIR / name
 
-      function render() {
-        const list = document.getElementById('list');
-        list.innerHTML = '';
-        zoneOrder.forEach((id, idx) => {
-          const s = statusById[id] || { online: false, port: 'unknown' };
-          const li = document.createElement('li');
-          li.innerHTML = `
-            <span class=\"dot ${s.online ? 'on' : 'off'}\"></span>
-            <div>
-              <div>${id}</div>
-              <div class=\"tiny\">${s.online ? 'online' : 'offline'} · port: ${s.port ?? 'unknown'}</div>
-            </div>
-            <button ${!s.online ? 'disabled' : ''}>Blink</button>
-            <button ${idx === 0 ? 'disabled' : ''}>↑</button>
-            <button ${idx === zoneOrder.length - 1 ? 'disabled' : ''}>↓</button>
-            <span class=\"tiny\">${idx + 1}</span>
-          `;
-          const buttons = li.querySelectorAll('button');
-          buttons[0].onclick = () => blink(id);
-          buttons[1].onclick = () => move(idx, -1);
-          buttons[2].onclick = () => move(idx, +1);
-          list.appendChild(li);
-        });
-      }
 
-      async function blink(receiverId) {
-        const msg = document.getElementById('msg');
-        const res = await fetch('/api/blink', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ receiverId })
-        });
-        if (!res.ok) {
-          msg.className = 'tiny err';
-          msg.textContent = `Blink request failed for ${receiverId}`;
-          return;
-        }
-        msg.className = 'tiny ok';
-        msg.textContent = `Blink request sent to ${receiverId}`;
-      }
+def _read_asset(name: str) -> bytes:
+    """Read a bundled web asset as bytes."""
+    return _asset_path(name).read_bytes()
 
-      async function refresh() {
-        const res = await fetch('/api/status');
-        const data = await res.json();
-        statusById = {};
-        (data.receivers || []).forEach(r => statusById[r.id] = r);
 
-        const merged = [...(data.zoneOrder || [])];
-        Object.keys(statusById).forEach(id => {
-          if (!merged.includes(id)) merged.push(id);
-        });
-        zoneOrder = merged;
-        render();
-      }
-
-      async function save() {
-        const msg = document.getElementById('msg');
-        if (saveInFlight) return;
-        saveInFlight = true;
-        try {
-          const res = await fetch('/api/zone-order', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ zoneOrder })
-          });
-          if (!res.ok) {
-            msg.className = 'tiny err';
-            msg.textContent = 'Failed to save order (will retry on next change)';
-            return;
-          }
-          const data = await res.json();
-          zoneOrder = data.zoneOrder || zoneOrder;
-          msg.className = 'tiny ok';
-          msg.textContent = 'Order saved automatically';
-          render();
-        } finally {
-          saveInFlight = false;
-        }
-      }
-
-      refresh();
-      setInterval(() => refresh().catch(() => {}), 1000);
-    </script>
-  </body>
-</html>
-"""
+def _content_type_for(path: str) -> str:
+    """Return the response content type for a static asset."""
+    if path.endswith(".html"):
+        return "text/html; charset=utf-8"
+    if path.endswith(".css"):
+        return "text/css; charset=utf-8"
+    if path.endswith(".js"):
+        return "application/javascript; charset=utf-8"
+    return "application/octet-stream"
 
 
 class ReceiverConfigServer:
@@ -198,14 +78,25 @@ class ReceiverConfigServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _send_asset(self, asset_name: str) -> None:
+                body = _read_asset(asset_name)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", _content_type_for(asset_name))
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_GET(self) -> None:  # pylint: disable=invalid-name
                 if self.path in ("/", "/index.html"):
-                    body = _PAGE.encode("utf-8")
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._send_asset("index.html")
+                    return
+
+                if self.path == "/styles.css":
+                    self._send_asset("styles.css")
+                    return
+
+                if self.path == "/app.js":
+                    self._send_asset("app.js")
                     return
 
                 if self.path == "/api/status":

@@ -15,6 +15,34 @@
 // https://www.uuidgenerator.net/
 
 #define SERVICE_UUID "12345678-1234-1234-1234-12345678abcd"
+#define IDENTITY_LED_PIN 25
+
+int ledBrightness = 0;
+int ledFadeAmount = 5;
+bool ledPulsing = false;
+
+void setupIndicator() {
+  pinMode(IDENTITY_LED_PIN, OUTPUT);
+
+  // Indicate the system is online by turning the LED fully on
+  analogWrite(IDENTITY_LED_PIN, 255);
+  ledBrightness = 255;
+  ledPulsing = true;
+}
+
+void updateIndicator() {
+  if (!ledPulsing) {
+    return;
+  }
+
+  // Create a smooth transition up/down in brightness
+  ledBrightness += ledFadeAmount;
+  if (ledBrightness <= 0 || ledBrightness >= 255) {
+    ledFadeAmount = -ledFadeAmount;
+    ledBrightness = constrain(ledBrightness, 0, 255);
+  }
+  analogWrite(IDENTITY_LED_PIN, ledBrightness);
+}
 
 void setup() {
   Serial.begin(115200);
@@ -38,9 +66,11 @@ void setup() {
   pAdvertising->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
   Serial.println("Advertisement started!");
+
+  setupIndicator();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  delay(2000);
+  updateIndicator();
+  delay(1);
 }
