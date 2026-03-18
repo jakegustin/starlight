@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from .types import ZoneEvent, ZoneEvents
 from .user import User
@@ -81,14 +81,20 @@ class CentralController:
         self._zone_active: dict[str, Optional[str]] = {z: None for z in zone_order}
         self._event_log: list[ZoneEvent] = []
 
+        self.on_user_registered: Optional[Callable[[str], None]] = None
+
     def register_user(self, uuid: str, priority: int = 0) -> None:
         """
         Adds/Registers a user into the system who can enable zone effects
         """
-        if uuid not in self._users:
+        is_new = uuid not in self._users
+        if is_new:
             self._users[uuid] = User(uuid, priority)
         else:
             self._users[uuid].priority = priority
+
+        if is_new and self.on_user_registered:
+            self.on_user_registered(uuid)
 
     def add_zone(self, zone_id: str) -> None:
         """
@@ -210,6 +216,10 @@ class CentralController:
         Get the User instance based upon a given device UUID
         """
         return self._users.get(uuid)
+
+    def get_registered_uuids(self) -> list[str]:
+        """Return a list of all UUIDs registered with the controller."""
+        return list(self._users.keys())
 
     def active_user_at(self, zone_id: str) -> Optional[str]:
         """

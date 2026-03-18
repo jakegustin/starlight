@@ -165,7 +165,7 @@ async function boot() {
   setInterval(() => refresh().catch((error) => {
     setMessage(error instanceof Error ? error.message : String(error), 'err');
     setSyncIndicator('Offline', false);
-  }), 1000);
+  }), 2000);
 }
 
 document.addEventListener('DOMContentLoaded', boot);

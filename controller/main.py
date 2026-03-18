@@ -131,6 +131,12 @@ def main() -> None:
         verbose=args.verbose,
     )
 
+    # Ensure any pre-registered UUIDs are propagated to receivers immediately
+    mux.broadcast_uuid_list()
+
+    # Ensure any future registrations will update receivers too
+    controller.on_user_registered = lambda _: mux.broadcast_uuid_list()
+
     ui_server: ReceiverConfigServer | None = None
     if args.config_ui:
         ui_server = ReceiverConfigServer(

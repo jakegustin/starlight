@@ -12,9 +12,13 @@
 #include <BLEAdvertisedDevice.h>
 
 #define MAX_UUIDS 128
-#define RECEIVER_NAME "Receiver A"
+#define RECEIVER_NAME "Receiver B"
 #define IDENTITY_LED_PIN 25
 #define HEARTBEAT_MS 5000
+
+// List of UUIDs to scan for. This list is updated by the controller.
+String scanUuids[MAX_UUIDS];
+int scanUuidCount = 0;
 
 // Initializing some variables. How exciting.
 BLEScan *pBLEScan;
@@ -77,6 +81,46 @@ void updateBlinker() {
   nextBlinkToggleMs = now + blinkDuration;
 }
 
+// Set the list of UUIDs that the receiver should accept.
+// This list is overwritten each time the controller sends a new list.
+void setScanUuids(const String &payload) {
+  scanUuidCount = 0;
+
+  int uuidsKey = payload.indexOf("\"uuids\"");
+  if (uuidsKey < 0) {
+    return;
+  }
+
+  int start = payload.indexOf('[', uuidsKey);
+  if (start < 0) {
+    return;
+  }
+
+  int end = payload.indexOf(']', start);
+  if (end < 0) {
+    return;
+  }
+
+  int pos = start + 1;
+  while (pos < end && scanUuidCount < MAX_UUIDS) {
+    int openQuote = payload.indexOf('"', pos);
+    if (openQuote < 0 || openQuote >= end) {
+      break;
+    }
+    int closeQuote = payload.indexOf('"', openQuote + 1);
+    if (closeQuote < 0 || closeQuote > end) {
+      break;
+    }
+
+    String uuid = payload.substring(openQuote + 1, closeQuote);
+    if (uuid.length() > 0) {
+      scanUuids[scanUuidCount++] = uuid;
+    }
+
+    pos = closeQuote + 1;
+  }
+}
+
 /*
     ***************
       SERIAL CONNS
@@ -98,6 +142,13 @@ void handleIncomingSerialLine(const String& line) {
   if (compact.indexOf("\"type\":\"command\"") < 0) {
     return;
   }
+
+  // The controller may send us a list of UUIDs to scan for.
+  if (compact.indexOf("\"command\":\"set_uuids\"") >= 0) {
+    setScanUuids(line);
+    return;
+  }
+
   if (compact.indexOf("\"command\":\"blink\"") < 0) {
     return;
   }
@@ -144,7 +195,21 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 
     // Cache the UUID string (avoid calling toString().c_str() multiple times on a temporary)
     String uuid = advertisedDevice.getServiceUUID().toString();
-    if (strcmp(uuid.c_str(), "12345678-1234-1234-1234-12345678abcd") != 0) {
+
+    // If the controller hasn't supplied us with any UUIDs, fall back to the default.
+    if (scanUuidCount == 0) {
+      scanUuids[0] = "12345678-1234-1234-1234-12345678abcd";
+      scanUuidCount = 1;
+    }
+
+    bool matches = false;
+    for (int i = 0; i < scanUuidCount; i++) {
+      if (uuid.equalsIgnoreCase(scanUuids[i])) {
+        matches = true;
+        break;
+      }
+    }
+    if (!matches) {
       return;
     }
 

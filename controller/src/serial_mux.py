@@ -165,6 +165,26 @@ class MultiSerialIngester:
             print(f"[MSI] blink request for {receiver_id}: {payload}")
         return self.send_receiver_command(receiver_id, payload)
 
+    def _uuid_command_payload(self) -> dict[str, object]:
+        """Build the outgoing command payload containing the current UUID list."""
+        return {
+            "type": "command",
+            "command": "set_uuids",
+            "uuids": self.controller.get_registered_uuids(),
+        }
+
+    def broadcast_uuid_list(self) -> None:
+        """Broadcast the current list of registered UUIDs to all known receivers."""
+        for receiver_id in list(self._receiver_state.keys()):
+            self.send_receiver_command(receiver_id, self._uuid_command_payload())
+
+    def send_uuid_list_to_receiver(self, receiver_id: str) -> bool:
+        """Send the current list of registered UUIDs to a specific receiver."""
+        payload = self._uuid_command_payload()
+        if self.verbose:
+            print(f"[MSI] sending uuid list to {receiver_id}: {payload}")
+        return self.send_receiver_command(receiver_id, payload)
+
     def _mark_port_offline(self, port: str) -> None:
         """
         Mark any receiver ids seen on this port as offline. Useful if no heartbeat detected
@@ -343,6 +363,9 @@ class MultiSerialIngester:
                     receiver_id=receiver_id,
                     online=True,
                 )
+
+                # Immediately send the current UUID list so receivers can filter advertisements
+                self.send_uuid_list_to_receiver(receiver_id)
 
         # For valid, non-heartbeat messages, we can still acknowledge the device is online
         receiver_id = payload.get("id")

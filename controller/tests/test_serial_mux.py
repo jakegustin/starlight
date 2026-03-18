@@ -15,9 +15,16 @@ class _FakeController:
 
     def __init__(self) -> None:
         self.ingested: list[str] = []
+        self._uuids: list[str] = ["12345678-1234-1234-1234-12345678abcd"]
 
     def ingest(self, line: str) -> None:
         self.ingested.append(line)
+
+    def get_registered_uuids(self) -> list[str]:
+        return list(self._uuids)
+
+    def add_uuid(self, uuid: str) -> None:
+        self._uuids.append(uuid)
 
 
 class _DummySerial:
@@ -360,6 +367,59 @@ def test_request_receiver_blink_sends_command(monkeypatch: pytest.MonkeyPatch) -
     for port_writes in _DummySerial.writes_by_port.values():
         writes.extend(port_writes)
     assert any('"command": "blink"' in line for line in writes)
+
+    ingester.stop()
+    t.join(timeout=1)
+
+
+def test_heartbeat_triggers_uuid_list_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure that receiving a heartbeat causes the UUID list to be sent to the receiver."""
+    fake = _FakeController()
+
+    monkeypatch.setattr("controller.src.serial_mux.glob.glob", lambda pattern: ["/dev/tty.B"])
+
+    class HeartbeatSerial(_DummySerial):
+        def __init__(self, port: str, baudrate: int, timeout: float) -> None:
+            super().__init__(port, baudrate, timeout)
+            self._lines = [b"{\"id\":\"receiver-b\", \"type\": \"heartbeat\"}\n"]
+
+    monkeypatch.setattr("controller.src.serial_mux.serial.Serial", HeartbeatSerial)
+
+    ingester = MultiSerialIngester(
+        controller=fake,
+        ports=[],
+        scan_ports=True,
+        scan_patterns=["/dev/tty.*"],
+        scan_interval=0.01,
+    )
+
+    t = threading.Thread(target=ingester.run_forever, daemon=True)
+    t.start()
+
+    deadline = time.time() + 1.0
+    state = {}
+    while time.time() < deadline:
+        state = {s["id"]: s for s in ingester.get_receiver_statuses()}
+        if "receiver-b" in state:
+            break
+        time.sleep(0.01)
+
+    assert "receiver-b" in state, "Receiver was never discovered"
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        writes = []
+        for port_writes in _DummySerial.writes_by_port.values():
+            writes.extend(port_writes)
+        if any('"command": "set_uuids"' in line for line in writes):
+            break
+        time.sleep(0.01)
+
+    writes = []
+    for port_writes in _DummySerial.writes_by_port.values():
+        writes.extend(port_writes)
+    assert any('"command": "set_uuids"' in line for line in writes)
+    assert any("12345678-1234-1234-1234-12345678abcd" in line for line in writes)
 
     ingester.stop()
     t.join(timeout=1)
