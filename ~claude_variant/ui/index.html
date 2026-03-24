@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Starlight — Configuration UI</title>
+  <style>
+    /* ── Reset & tokens ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0d1117;
+      --surface:     #161b22;
+      --surface-2:   #21262d;
+      --border:      #30363d;
+      --text:        #e6edf3;
+      --text-muted:  #7d8590;
+      --accent:      #58a6ff;
+      --accent-dim:  #1f4068;
+      --green:       #3fb950;
+      --green-dim:   #0d3018;
+      --amber:       #d29922;
+      --amber-dim:   #2d1f00;
+      --red:         #f85149;
+      --red-dim:     #3d0f0a;
+      --radius:      8px;
+      --radius-lg:   12px;
+      --font:        'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono:   'JetBrains Mono', 'Fira Code', monospace;
+      --shadow:      0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    header .logo svg { width: 22px; height: 22px; }
+
+    #connection-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    #connection-status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      transition: background 0.3s;
+    }
+
+    #connection-status.connected .dot { background: var(--green); }
+    #connection-status.connected .label { color: var(--text); }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 20px;
+    }
+
+    /* ── Card ───────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .card-header h2 svg { opacity: 0.7; }
+
+    .card-body { padding: 16px 18px; }
+
+    /* ── Receivers panel ─────────────────────────────────────────────────── */
+    #receivers-panel { grid-column: 1; grid-row: 1; }
+
+    .receiver-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .receiver-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: grab;
+      transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
+      user-select: none;
+    }
+
+    .receiver-item:active { cursor: grabbing; }
+    .receiver-item.dragging { opacity: 0.4; }
+    .receiver-item.drag-over { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+
+    .receiver-item .drag-handle {
+      color: var(--text-muted);
+      opacity: 0.5;
+      flex-shrink: 0;
+    }
+
+    .receiver-info { flex: 1; min-width: 0; }
+    .receiver-id {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .receiver-port {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .receiver-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+
+    .receiver-badge.active {
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(63,185,80,0.3);
+    }
+
+    .receiver-badge.inactive {
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(248,81,73,0.3);
+    }
+
+    .blink-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .blink-btn:hover {
+      border-color: var(--amber);
+      color: var(--amber);
+      background: var(--amber-dim);
+    }
+
+    .blink-btn.blinked {
+      border-color: var(--amber);
+      color: var(--amber);
+      background: var(--amber-dim);
+    }
+
+    .zone-badge {
+      font-size: 10px;
+      font-weight: 700;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid rgba(88,166,255,0.3);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+
+    .empty-state {
+      padding: 32px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ── Queue panel ─────────────────────────────────────────────────────── */
+    #queue-panel { grid-column: 2; grid-row: 1 / 3; }
+
+    .zone-section { margin-bottom: 20px; }
+    .zone-section:last-child { margin-bottom: 0; }
+
+    .zone-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .zone-index {
+      font-size: 10px;
+      font-weight: 700;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .zone-name {
+      font-weight: 600;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      flex: 1;
+    }
+
+    .zone-count {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .user-list { display: flex; flex-direction: column; gap: 5px; }
+
+    .user-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .user-avatar {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent-dim);
+      border: 1px solid rgba(88,166,255,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .user-uuid {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .zone-empty {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 4px 2px;
+    }
+
+    /* ── Log panel ───────────────────────────────────────────────────────── */
+    #log-panel { grid-column: 1; grid-row: 2; }
+
+    #log-output {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--text-muted);
+      height: 180px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    #log-output .log-ts { color: var(--border); }
+    #log-output .log-info { color: var(--text-muted); }
+    #log-output .log-ok   { color: var(--green); }
+    #log-output .log-warn { color: var(--amber); }
+    #log-output .log-err  { color: var(--red); }
+
+    .log-clear-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 5px;
+      padding: 2px 8px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .log-clear-btn:hover { border-color: var(--text-muted); color: var(--text); }
+
+    /* ── Scrollbar ───────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 760px) {
+      main { grid-template-columns: 1fr; }
+      #queue-panel { grid-column: 1; grid-row: 2; }
+      #log-panel   { grid-column: 1; grid-row: 3; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+    Starlight
+  </div>
+  <div id="connection-status">
+    <div class="dot"></div>
+    <span class="label">Disconnected</span>
+  </div>
+</header>
+
+<main>
+  <!-- Receivers -->
+  <div class="card" id="receivers-panel">
+    <div class="card-header">
+      <h2>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
+        </svg>
+        BLE Receivers
+      </h2>
+      <small style="color:var(--text-muted);font-size:11px;">drag to reorder zones</small>
+    </div>
+    <div class="card-body">
+      <div class="receiver-list" id="receiver-list">
+        <div class="empty-state">Waiting for receivers…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Queue -->
+  <div class="card" id="queue-panel">
+    <div class="card-header">
+      <h2>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        Queue
+      </h2>
+    </div>
+    <div class="card-body" id="queue-body">
+      <div class="empty-state">No active zones yet.</div>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="card" id="log-panel">
+    <div class="card-header">
+      <h2>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+        </svg>
+        Event Log
+      </h2>
+      <button class="log-clear-btn" onclick="clearLog()">clear</button>
+    </div>
+    <div class="card-body" style="padding:12px 14px;">
+      <div id="log-output"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Configuration
+// ═══════════════════════════════════════════════════════════════════════════
+
+const WS_URL = `ws://${location.hostname}:8765`;
+const RECONNECT_DELAY_MS = 3000;
+const MAX_LOG_LINES = 200;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════════════════
+
+let state = { receivers: {}, zones: [], users_by_zone: {} };
+let ws = null;
+let reconnectTimer = null;
+
+// Drag-and-drop state
+let dragSrcIndex = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket
+// ═══════════════════════════════════════════════════════════════════════════
+
+function connect() {
+  log('info', `Connecting to ${WS_URL}…`);
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    setConnectionStatus(true);
+    log('ok', 'Connected');
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'state') {
+        state = msg;
+        render();
+      }
+    } catch (e) {
+      log('err', `Bad message: ${e.message}`);
+    }
+  };
+
+  ws.onclose = () => {
+    setConnectionStatus(false);
+    log('warn', `Disconnected — retrying in ${RECONNECT_DELAY_MS / 1000} s`);
+    reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+  };
+
+  ws.onerror = () => {
+    log('err', 'WebSocket error');
+    ws.close();
+  };
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+function setConnectionStatus(connected) {
+  const el = document.getElementById('connection-status');
+  el.className = connected ? 'connected' : '';
+  el.querySelector('.label').textContent = connected ? 'Connected' : 'Disconnected';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Rendering
+// ═══════════════════════════════════════════════════════════════════════════
+
+function render() {
+  renderReceivers();
+  renderQueue();
+}
+
+// ── Receivers ──────────────────────────────────────────────────────────────
+
+function renderReceivers() {
+  const list = document.getElementById('receiver-list');
+  const zones = state.zones || [];
+  const receivers = state.receivers || {};
+
+  if (zones.length === 0) {
+    list.innerHTML = '<div class="empty-state">Waiting for receivers…</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  zones.forEach((rid, idx) => {
+    const rec = receivers[rid] || {};
+    const active = rec.active !== false;
+    const item = document.createElement('div');
+    item.className = 'receiver-item';
+    item.draggable = true;
+    item.dataset.index = idx;
+    item.dataset.id = rid;
+
+    item.innerHTML = `
+      <div class="drag-handle">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+          <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+          <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+        </svg>
+      </div>
+      <div class="zone-badge">Z${idx}</div>
+      <div class="receiver-info">
+        <div class="receiver-id" title="${rid}">${rid}</div>
+        <div class="receiver-port">${rec.port || '—'}</div>
+      </div>
+      <span class="receiver-badge ${active ? 'active' : 'inactive'}">${active ? 'Active' : 'Offline'}</span>
+      <button class="blink-btn" title="Identify receiver" onclick="blink('${rid}', this)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+          <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+          <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
+    `;
+
+    // Drag-and-drop events
+    item.addEventListener('dragstart', onDragStart);
+    item.addEventListener('dragover',  onDragOver);
+    item.addEventListener('dragleave', onDragLeave);
+    item.addEventListener('drop',      onDrop);
+    item.addEventListener('dragend',   onDragEnd);
+
+    list.appendChild(item);
+  });
+}
+
+// ── Queue ─────────────────────────────────────────────────────────────────
+
+function renderQueue() {
+  const body = document.getElementById('queue-body');
+  const zones = state.zones || [];
+  const usersByZone = state.users_by_zone || {};
+
+  if (zones.length === 0) {
+    body.innerHTML = '<div class="empty-state">No active zones yet.</div>';
+    return;
+  }
+
+  body.innerHTML = '';
+  zones.forEach((rid, idx) => {
+    const users = usersByZone[rid] || [];
+    const section = document.createElement('div');
+    section.className = 'zone-section';
+
+    section.innerHTML = `
+      <div class="zone-header">
+        <span class="zone-index">Z${idx}</span>
+        <span class="zone-name">${rid}</span>
+        <span class="zone-count">${users.length} user${users.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="user-list">
+        ${users.length === 0
+          ? '<div class="zone-empty">Empty</div>'
+          : users.map(uuid => `
+              <div class="user-item">
+                <div class="user-avatar">${uuid.slice(0, 2).toUpperCase()}</div>
+                <div class="user-uuid" title="${uuid}">${uuid}</div>
+              </div>
+            `).join('')
+        }
+      </div>
+    `;
+    body.appendChild(section);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Drag-and-drop reordering
+// ═══════════════════════════════════════════════════════════════════════════
+
+function onDragStart(e) {
+  dragSrcIndex = parseInt(this.dataset.index);
+  this.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  this.classList.add('drag-over');
+}
+
+function onDragLeave() {
+  this.classList.remove('drag-over');
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  this.classList.remove('drag-over');
+  const targetIndex = parseInt(this.dataset.index);
+  if (dragSrcIndex === null || dragSrcIndex === targetIndex) return;
+
+  // Reorder zones array in local state, then send to controller.
+  const zones = [...(state.zones || [])];
+  const [moved] = zones.splice(dragSrcIndex, 1);
+  zones.splice(targetIndex, 0, moved);
+
+  // Optimistic update — the controller will echo back the authoritative state.
+  state.zones = zones;
+  render();
+
+  send({ type: 'reorder', order: zones });
+  log('info', `Zone order → ${zones.join(', ')}`);
+}
+
+function onDragEnd() {
+  this.classList.remove('dragging');
+  document.querySelectorAll('.receiver-item').forEach(el => el.classList.remove('drag-over'));
+  dragSrcIndex = null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Blink
+// ═══════════════════════════════════════════════════════════════════════════
+
+function blink(receiverId, btn) {
+  send({ type: 'blink', receiver_id: receiverId });
+  log('info', `Blink → ${receiverId}`);
+  btn.classList.add('blinked');
+  setTimeout(() => btn.classList.remove('blinked'), 1500);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Event log
+// ═══════════════════════════════════════════════════════════════════════════
+
+function log(level, message) {
+  const el = document.getElementById('log-output');
+  const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  const line = document.createElement('div');
+  line.innerHTML =
+    `<span class="log-ts">${ts}</span>  <span class="log-${level}">${escHtml(message)}</span>`;
+  el.appendChild(line);
+
+  // Trim old lines
+  while (el.children.length > MAX_LOG_LINES) el.removeChild(el.firstChild);
+
+  // Auto-scroll to bottom
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-output').innerHTML = '';
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Boot
+// ═══════════════════════════════════════════════════════════════════════════
+
+connect();
+</script>
+</body>
+</html>
