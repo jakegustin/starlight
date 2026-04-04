@@ -64,15 +64,16 @@ Two-way communication is expected between the controller and the receivers. Thes
 
 Note that depending on the message type, additional fields may be needed. For instance, passing along information from an advertisement (a "data" message) should have additional fields such as RSSI, UUID, etc. A "heartbeat" message should also be sent by each receiver to the controller on a fixed timing interval basis (e.g. every 2 seconds) to help the controller identify and register BLE receivers as part of the system, though it should not require additional fields. However, all receiver-to-controller messages should be timestamped by the central controller, modifying the JSON as part of the ingestion process.
 
-For controller messages to the receiver(s), the following structure should be used at a minimum:
+For controller messages to the receiver(s), the same exact structure should be used at a minimum, where id in this case refers to the targeted receiver:
 
 ```
 {
+    "id": string,
     "type": string
 }
 ```
 
-Two types of messages are considered in the current version: "command" messages and "uuid" messages. Command messages specify what command is being sent to a given receiver. At this time, only the blink command exists, though your implementation can add additional features as you see fit. UUID messages are the controller's way of specifying whitelisted UUIDs to the receivers, where receivers should only forward advertisements from the specified UUIDs. a UUID message should be sent upon the controller booting up, and every time a receiver joins the system (or reconnects after previously being disconnected).
+Two types of messages are considered in the current version: "command" messages and "uuid" messages. Command messages specify what command is being sent to a given receiver. At this time, only the blink and lighting commands exist, though your implementation can add additional features as you see fit. UUID messages are the controller's way of specifying whitelisted UUIDs to the receivers, where receivers should only forward advertisements from the specified UUIDs. a UUID message should be sent upon the controller booting up, and every time a receiver joins the system (or reconnects after previously being disconnected).
 
 One important note: if the controller receives a malformed transmission from a receiver (i.e. a JSON cannot be parsed from the message), the message should be deemed as invalid and simply thrown away. As a result, a receiver should not be marked inactive until at least 2 heartbeats in a row have not been received.
 
@@ -82,7 +83,9 @@ You should provide some mechanism, likely a "main" Python file, to instantiate a
 
 ### Building the BLE Receiver Firmware
 
-BLE Receivers are primarily responsible for, as the name implies, receiving BLE advertisements from other devices. The receivers should actively scan for advertisements, rather than passively, to ensure a lower latency. Only when the receiver encounters an advertisements featuring one of the whitelisted UUIDs, as presented by the controller, should it send a Serial message to the controller with information such as the receiver's ID, the advertiser's UUID, the RSSI, and a timestamp (defined by the controller, not receivers, for consistency). Furthermore, the BLE receiver should ensure a status indicator LED is kept on at all times. A "blink" sequence should also be defined fully in the firmware to blink the status indicator LED 3 times upon receiving a request from the controller for the receiver to blink its LED.
+BLE Receivers are primarily responsible for, as the name implies, receiving BLE advertisements from other devices. The receivers should actively scan for advertisements, rather than passively, to ensure a lower latency. Only when the receiver encounters an advertisements featuring one of the whitelisted UUIDs, as presented by the controller, should it send a Serial message to the controller with information such as the receiver's ID, the advertiser's UUID, the RSSI, and a timestamp (defined by the controller, not receivers, for consistency). Furthermore, the BLE receiver should ensure a status indicator LED is kept on at all times. A "blink" sequence should also be defined fully in the firmware to blink the status indicator LED 3 times upon receiving a request from the controller for the receiver to blink its LED. Furthermore, a "lighting" command should be handle when received from the controller, where the lighting command specifies what user's lighting should be applied for that receiver, turning all lights off if an empty string is passed in for the target user.
+
+You should also implement an alternative version of the firmware that uses ESP-NOW for communications. More precisely, the receivers in the system will exclusively use ESP-NOW for inbound and outbound communications, while one dedicated "gateway" node has a Serial connection to the central controller. If the ESP32 devices are all plugged in, an agentic workflow may be able to determine what MAC address the gateway is using, updating the receiver code to match this. If this is not possible, then the MAC address updating should be clearly deferred to the user.
 
 ### Building the Testing Suite
 

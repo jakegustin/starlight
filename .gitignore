@@ -1,4 +1,6 @@
 .pytest_cache
 starlight_venv
+venv
+.venv
 __pycache__
 .DS_Store

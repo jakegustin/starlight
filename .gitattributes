@@ -1,3 +1,5 @@
+# For media stored in Git LFS
+
 *.mp4 filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
