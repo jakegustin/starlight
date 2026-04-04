@@ -1,6 +1,0 @@
-# Starlight UUID whitelist
-# One BLE service UUID per line. Lines beginning with # are ignored.
-
-# Example UUIDs — replace with your actual advertiser UUIDs before deploying.
-12345678-1234-1234-1234-123456789abc
-abcdef01-abcd-abcd-abcd-abcdef012345

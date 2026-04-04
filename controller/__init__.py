@@ -1,23 +1,23 @@
-"""
-The central controller of the Starlight system, ingesting serial data updating queue state.
-"""
-from __future__ import annotations
+"""Starlight controller package."""
 
-from .src.core import CentralController
-from .src.kalman import KalmanFilter
-from .src.rssi import RSSIBuffer
-from .src.user import User
-from .src.types import ZoneEvent, ZoneEvents
-from .src.serial_mux import MultiSerialIngester
-from .src.config_ui import ReceiverConfigServer
+from .config import ControllerConfig
+from .controller import Controller
+from .kalman_filter import KalmanFilter
+from .rssi_processor import RSSIProcessor
+from .zone_manager import ZoneManager
+from .user_tracker import UserTracker
+from .serial_connection import SerialConnection
+from .serial_manager import SerialManager
+from .websocket_server import WebSocketServer
 
 __all__ = [
-    "CentralController",
+    "ControllerConfig",
+    "Controller",
     "KalmanFilter",
-    "RSSIBuffer",
-    "User",
-    "ZoneEvent",
-    "ZoneEvents",
-    "MultiSerialIngester",
-    "ReceiverConfigServer",
+    "RSSIProcessor",
+    "ZoneManager",
+    "UserTracker",
+    "SerialConnection",
+    "SerialManager",
+    "WebSocketServer",
 ]

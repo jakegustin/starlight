@@ -1,3 +1,4 @@
+pyserial
+websockets
 pytest
 pylint
-pyserial
