@@ -57,6 +57,7 @@ class Controller:
             process_noise=config.kalman_process_noise,
             measurement_noise=config.kalman_measurement_noise,
             window_size=config.rolling_window_size,
+            raw_mode=config.raw_mode,
         )
 
         self._user_tracker = UserTracker(
@@ -66,6 +67,7 @@ class Controller:
             hysteresis=config.hysteresis,
             rssi_timeout_threshold=config.rssi_timeout_threshold,
             rssi_timeout_duration=config.rssi_timeout_duration,
+            no_ratchet=config.no_ratchet,
         )
 
         self._serial_manager = SerialManager(
@@ -292,6 +294,9 @@ class Controller:
             # If any receiver is marked as inactive, update the UI accordingly
             if changed:
                 self._broadcast_state()
+
+            # Evict users who haven't been heard by any receiver recently
+            self._user_tracker.sweep_stale_users(self.config.rssi_timeout_duration)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Outbound Commands to Receivers

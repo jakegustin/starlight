@@ -4,7 +4,8 @@ the smoothed signal values consumed by the UserTracker for zone decisions.
 """
 
 import logging
-from collections import defaultdict, deque
+import threading
+from collections import deque
 from typing import Dict, Optional, Tuple
 
 from controller.kalman_filter import KalmanFilter
@@ -30,6 +31,7 @@ class RSSIProcessor:
         process_noise: float,
         measurement_noise: float,
         window_size: int,
+        raw_mode: bool = False,
     ):
         """
         Initialise the RSSI processor.
@@ -38,6 +40,7 @@ class RSSIProcessor:
             process_noise: Kalman filter Q (non-negative).
             measurement_noise: Kalman filter R (positive).
             window_size: Rolling average window size. Must be >= 1.
+            raw_mode: When True, skip filtering entirely and use raw RSSI values directly.
         """
         # Make sure the window size is valid!
         if window_size < 1:
@@ -50,6 +53,9 @@ class RSSIProcessor:
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
         self.window_size = window_size
+        self.raw_mode = raw_mode
+
+        self._lock = threading.Lock()
 
         # Set up one KalmanFilter per (uuid, receiver_id) pair.
         self._filters: Dict[_PairKey, KalmanFilter] = {}
@@ -72,30 +78,46 @@ class RSSIProcessor:
         """
         key = (uuid, receiver_id)
 
-        # Create filter/window on first reading, configuring the filter appropriately.
-        if key not in self._filters:
-            self._filters[key] = KalmanFilter(
-                process_noise=self.process_noise,
-                measurement_noise=self.measurement_noise,
-                initial_estimate=raw_rssi,
-            )
-            self._windows[key] = deque(maxlen=self.window_size)
+        with self._lock:
+            # In raw mode, bypass Kalman filtering and rolling averaging entirely.
+            if self.raw_mode:
+                if key not in self._windows:
+                    self._windows[key] = deque(maxlen=1)
+                    logger.debug(
+                        "RSSIProcessor: created raw window for uuid=%s receiver=%s",
+                        uuid, receiver_id,
+                    )
+                self._windows[key].append(raw_rssi)
+                logger.debug(
+                    "RSSIProcessor: uuid=%s receiver=%s raw=%.1f (raw mode)",
+                    uuid, receiver_id, raw_rssi,
+                )
+                return raw_rssi
+
+            # Create filter/window on first reading, configuring the filter appropriately.
+            if key not in self._filters:
+                self._filters[key] = KalmanFilter(
+                    process_noise=self.process_noise,
+                    measurement_noise=self.measurement_noise,
+                    initial_estimate=raw_rssi,
+                )
+                self._windows[key] = deque(maxlen=self.window_size)
+                logger.debug(
+                    "RSSIProcessor: created filter+window for uuid=%s receiver=%s",
+                    uuid, receiver_id,
+                )
+
+            # Retrieve the filtered reading and add it to the current UUID/Receiver window
+            filtered = self._filters[key].update(raw_rssi)
+            self._windows[key].append(filtered)
+
+            # Compute and return the average value of the filtered values for the UUID/Receiver pair
+            avg = self._compute_average(key)
             logger.debug(
-                "RSSIProcessor: created filter+window for uuid=%s receiver=%s",
-                uuid, receiver_id,
+                "RSSIProcessor: uuid=%s receiver=%s raw=%.1f filtered=%.2f avg=%.2f",
+                uuid, receiver_id, raw_rssi, filtered, avg,
             )
-
-        # Retrieve the filtered reading and add it to the current UUID/Receiver window
-        filtered = self._filters[key].update(raw_rssi)
-        self._windows[key].append(filtered)
-
-        # Compute and return the average value of the filtered values for the UUID/Receiver pair
-        avg = self._compute_average(key)
-        logger.debug(
-            "RSSIProcessor: uuid=%s receiver=%s raw=%.1f filtered=%.2f avg=%.2f",
-            uuid, receiver_id, raw_rssi, filtered, avg,
-        )
-        return avg
+            return avg
 
     def get_average(self, uuid: str, receiver_id: str) -> Optional[float]:
         """
@@ -106,9 +128,10 @@ class RSSIProcessor:
             receiver_id: BLE receiver ID.
         """
         key = (uuid, receiver_id)
-        if key not in self._windows or not self._windows[key]:
-            return None
-        return self._compute_average(key)
+        with self._lock:
+            if key not in self._windows or not self._windows[key]:
+                return None
+            return self._compute_average(key)
 
     def get_all_averages_for_uuid(self, uuid: str) -> Dict[str, Optional[float]]:
         """
@@ -117,11 +140,12 @@ class RSSIProcessor:
         Args:
             uuid: BLE advertiser UUID.
         """
-        result: Dict[str, Optional[float]] = {}
-        for (u, r), window in self._windows.items():
-            if u == uuid:
-                result[r] = self._compute_average((u, r)) if window else None
-        return result
+        with self._lock:
+            result: Dict[str, Optional[float]] = {}
+            for (u, r), window in self._windows.items():
+                if u == uuid:
+                    result[r] = self._compute_average((u, r)) if window else None
+            return result
 
     def remove_uuid(self, uuid: str):
         """
@@ -130,12 +154,13 @@ class RSSIProcessor:
         Args:
             uuid: BLE advertiser UUID to purge.
         """
-        keys_to_remove = [k for k in self._filters if k[0] == uuid]
-        for key in keys_to_remove:
-            del self._filters[key]
-            self._windows.pop(key, None)
-        if keys_to_remove:
-            logger.debug("RSSIProcessor: removed all state for uuid=%s", uuid)
+        with self._lock:
+            keys_to_remove = [k for k in self._windows if k[0] == uuid]
+            for key in keys_to_remove:
+                self._filters.pop(key, None)
+                del self._windows[key]
+            if keys_to_remove:
+                logger.debug("RSSIProcessor: removed all state for uuid=%s", uuid)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Private helpers

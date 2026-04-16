@@ -58,6 +58,7 @@ class UserTracker:
         hysteresis: float,
         rssi_timeout_threshold: float,
         rssi_timeout_duration: float,
+        no_ratchet: bool = False,
     ):
         """
         Initialise the user tracker.
@@ -69,6 +70,7 @@ class UserTracker:
             hysteresis: dBm advantage the next zone needs to trigger advancement.
             rssi_timeout_threshold: RSSI (dBm) below which a user is absent.
             rssi_timeout_duration: Seconds below threshold before eviction.
+            no_ratchet: When True, users can move to any zone (not just forward).
         """
         self.rssi_processor = rssi_processor
         self.zone_manager = zone_manager
@@ -76,6 +78,7 @@ class UserTracker:
         self.hysteresis = hysteresis
         self.rssi_timeout_threshold = rssi_timeout_threshold
         self.rssi_timeout_duration = rssi_timeout_duration
+        self.no_ratchet = no_ratchet
 
         self._users: Dict[str, UserState] = {}
         self._lock = threading.RLock()
@@ -104,7 +107,7 @@ class UserTracker:
             # If user has no current zone, assume they are at the first zone
             # NOTE: Should update this to assign them to the closest zone!
             if user.zone_receiver_id is None:
-                self._assign_first_zone(user)
+                self._assign_nearest_zone(user)
                 return
 
             # Check to see if the user should be evicted from the queue due to timeout
@@ -146,6 +149,32 @@ class UserTracker:
         with self._lock:
             self._evict(uuid)
 
+    def sweep_stale_users(self, timeout: float):
+        """
+        Evict any user who hasn't been heard by any receiver in the last ``timeout`` seconds.
+
+        Intended to be called periodically (e.g. from the heartbeat monitor thread) to
+        handle the case where a user walks out of range of all receivers and no further
+        RSSI data arrives, which would otherwise prevent the eviction timer from firing.
+
+        Args:
+            timeout: Seconds of silence before a user is considered gone.
+        """
+        now = time.monotonic()
+        with self._lock:
+            stale = [
+                uuid for uuid, user in self._users.items()
+                if now - user.last_seen >= timeout
+            ]
+            for uuid in stale:
+                logger.info(
+                    "UserTracker: uuid=%s evicted — no signal from any receiver for %.1f s",
+                    uuid, timeout,
+                )
+                self._evict(uuid)
+        if stale:
+            self.controller._broadcast_state()
+
     # ──────────────────────────────────────────────────────────────────────────
     # Private helpers
     # ──────────────────────────────────────────────────────────────────────────
@@ -157,10 +186,11 @@ class UserTracker:
             logger.info("UserTracker: new user detected uuid=%s", uuid)
         return self._users[uuid]
 
-    def _assign_first_zone(self, user: UserState):
+    def _assign_nearest_zone(self, user: UserState):
         """
-        Place user at the first zone.
-        
+        Place user at the zone where their current RSSI is strongest.
+        Falls back to zone 0 if no signal data exists yet.
+
         REQUIRES LOCK TO BE HELD!
         """
         zones = self.zone_manager.get_zones()
@@ -169,13 +199,27 @@ class UserTracker:
                 "UserTracker: no zones registered — cannot assign uuid=%s", user.uuid
             )
             return
-        user.zone_receiver_id = zones[0]
+
+        averages = self.rssi_processor.get_all_averages_for_uuid(user.uuid)
+        best_zone = None
+        best_avg = None
+        for zone in zones:
+            avg = averages.get(zone)
+            if avg is not None and (best_avg is None or avg > best_avg):
+                best_avg = avg
+                best_zone = zone
+
+        if best_zone is None:
+            best_zone = zones[0]
+
+        user.zone_receiver_id = best_zone
         user.below_threshold_since = None
+        zone_idx = zones.index(best_zone)
         logger.info(
-            "UserTracker: uuid=%s → assigned to zone 0 (receiver='%s')",
-            user.uuid, user.zone_receiver_id,
+            "UserTracker: uuid=%s → assigned to zone %d (receiver='%s')",
+            user.uuid, zone_idx, best_zone,
         )
-        self.controller._send_lighting(zones[0], user.uuid)
+        self.controller._send_lighting(best_zone, user.uuid)
 
     def _check_eviction(self, user: UserState) -> bool:
         """
@@ -221,7 +265,21 @@ class UserTracker:
 
     def _evaluate_advancement(self, user: UserState):
         """
-        Check whether the user should advance to the next zone. Lock must be held.
+        Check whether the user should move to a different zone. Lock must be held.
+
+        In normal (ratchet) mode, only forward movement is considered.
+        In no-ratchet mode, the user moves to whichever zone has the strongest signal.
+        Hysteresis applies in both modes to prevent thrashing.
+        """
+        if self.no_ratchet:
+            self._evaluate_best_zone(user)
+        else:
+            self._evaluate_forward(user)
+
+    def _evaluate_forward(self, user: UserState):
+        """
+        Advance the user to the next zone if its signal is stronger by the hysteresis margin.
+        Lock must be held.
         """
         next_receiver = self.zone_manager.get_next_zone_receiver(user.zone_receiver_id)
         if next_receiver is None:
@@ -242,16 +300,51 @@ class UserTracker:
                 user.uuid, user.zone_receiver_id, next_receiver,
                 next_avg, current_avg, self.hysteresis,
             )
-            old_receiver = user.zone_receiver_id
-            user.zone_receiver_id = next_receiver
-            zone_map = self.get_users_by_zone()
-            if old_receiver not in zone_map or len(zone_map[old_receiver]) == 0:
-                self.controller._send_lighting(old_receiver, "")
-            else:
-                self.controller._send_lighting(old_receiver, zone_map[old_receiver][0])
-            self.controller._send_lighting(next_receiver, user.uuid)
-                        
-            user.below_threshold_since = None  # Reset timer after advancing
+            self._move_user(user, next_receiver)
+
+    def _evaluate_best_zone(self, user: UserState):
+        """
+        Move the user to whichever zone has the strongest signal, in either direction.
+        Lock must be held.
+        """
+        averages = self.rssi_processor.get_all_averages_for_uuid(user.uuid)
+        current_avg = averages.get(user.zone_receiver_id)
+        if current_avg is None:
+            return
+
+        threshold = current_avg + self.hysteresis
+        best_zone = user.zone_receiver_id
+        best_avg = current_avg
+        for zone in self.zone_manager.get_zones():
+            avg = averages.get(zone)
+            if avg is not None and avg > threshold and avg > best_avg:
+                best_avg = avg
+                best_zone = zone
+
+        if best_zone != user.zone_receiver_id:
+            logger.info(
+                "UserTracker: uuid=%s moving '%s' → '%s' "
+                "(best=%.1f > current=%.1f + hyst=%.1f)",
+                user.uuid, user.zone_receiver_id, best_zone,
+                best_avg, current_avg, self.hysteresis,
+            )
+            self._move_user(user, best_zone)
+
+    def _move_user(self, user: UserState, new_receiver: str):
+        """
+        Assign a user to a new zone, update lighting, and reset the eviction timer.
+        Lock must be held.
+        """
+        old_receiver = user.zone_receiver_id
+        user.zone_receiver_id = new_receiver
+        user.below_threshold_since = None
+
+        zone_map = self.get_users_by_zone()
+        if old_receiver not in zone_map or len(zone_map[old_receiver]) == 0:
+            self.controller._send_lighting(old_receiver, "")
+        else:
+            self.controller._send_lighting(old_receiver, zone_map[old_receiver][0])
+        self.controller._send_lighting(new_receiver, user.uuid)
 
 
 

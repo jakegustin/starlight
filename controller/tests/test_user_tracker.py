@@ -7,6 +7,8 @@ a small sleep to let the timer elapse.
 """
 
 import time
+from unittest.mock import MagicMock
+
 import pytest
 
 from controller.rssi_processor import RSSIProcessor
@@ -37,6 +39,7 @@ def _make_tracker(
     tracker = UserTracker(
         rssi_processor=proc,
         zone_manager=zm,
+        controller=MagicMock(),
         hysteresis=hysteresis,
         rssi_timeout_threshold=threshold,
         rssi_timeout_duration=timeout,
@@ -58,11 +61,11 @@ class TestUserTrackerZoneAssignment:
         _feed(tracker, "uuid-1", "rec-A", -65.0)
         assert tracker.get_all_users()["uuid-1"] == "rec-A"
 
-    def test_new_user_seen_first_on_second_receiver_goes_to_zone_0(self):
-        """First data from rec-B should still land user at zone 0 (rec-A)."""
+    def test_new_user_seen_first_on_second_receiver_assigned_to_nearest_zone(self):
+        """First data from rec-B assigns user to rec-B (nearest/strongest zone)."""
         tracker, _, _ = _make_tracker()
         _feed(tracker, "uuid-1", "rec-B", -65.0)
-        assert tracker.get_all_users()["uuid-1"] == "rec-A"
+        assert tracker.get_all_users()["uuid-1"] == "rec-B"
 
     def test_no_zones_registered_does_not_crash(self):
         tracker, _, _ = _make_tracker(receivers=[])

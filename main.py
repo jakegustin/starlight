@@ -153,6 +153,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Seconds below rssi-threshold before a user is evicted.",
     )
 
+    # ── Demo / diagnostic modes ───────────────────────────────────────────────
+    demo = parser.add_argument_group("demo modes")
+    demo.add_argument(
+        "--no-filter",
+        action="store_true",
+        default=False,
+        help=(
+            "Bypass Kalman filtering and rolling averaging — raw RSSI is used directly. "
+            "Useful for demonstrating how noisy unfiltered signal is."
+        ),
+    )
+    demo.add_argument(
+        "--no-ratchet",
+        action="store_true",
+        default=False,
+        help=(
+            "Allow users to move in either direction between zones, not just forward. "
+            "Hysteresis still applies to prevent thrashing."
+        ),
+    )
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
     parser.add_argument(
         "--log-level",
@@ -201,6 +222,8 @@ def main():
         ws_port=args.ws_port,
         ui_port=args.ui_port,
         uuid_whitelist=whitelist,
+        raw_mode=args.no_filter,
+        no_ratchet=args.no_ratchet,
     )
 
     controller = Controller(config)

@@ -25,6 +25,12 @@ class ControllerConfig:
             Number of Kalman-filtered RSSI samples in rolling average per (UUID, receiver) pair. Must be >= 1.
         hysteresis:
             RSSI delta (dBm) the next zone must exceed over the current zone before advancing the user.
+        raw_mode:
+            When True, skip Kalman filtering and rolling averaging — raw RSSI is used directly.
+            Useful for demonstrations showing signal noise.
+        no_ratchet:
+            When True, users can move to any zone (not just forward) based on which has the strongest signal.
+            Hysteresis still applies to prevent thrashing.
         rssi_timeout_threshold:
             RSSI floor (dBm) where if a user's average drops below this value, the eviction timer starts.
         rssi_timeout_duration:
@@ -51,3 +57,5 @@ class ControllerConfig:
     ws_port: int = 8765
     ui_port: int = 8080
     uuid_whitelist: List[str] = field(default_factory=list)
+    raw_mode: bool = False
+    no_ratchet: bool = False
