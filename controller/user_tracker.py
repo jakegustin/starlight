@@ -350,6 +350,13 @@ class UserTracker:
 
     def _evict(self, uuid: str):
         """Remove a user and purge their RSSI state. Lock must be held."""
-        self._users.pop(uuid, None)
+        user = self._users.pop(uuid, None)
         self.rssi_processor.remove_uuid(uuid)
+        if user and user.zone_receiver_id is not None:
+            zone_map = self.get_users_by_zone()
+            remaining = zone_map.get(user.zone_receiver_id, [])
+            if remaining:
+                self.controller._send_lighting(user.zone_receiver_id, remaining[0])
+            else:
+                self.controller._send_lighting(user.zone_receiver_id, "")
         logger.debug("UserTracker: uuid=%s evicted and state purged", uuid)

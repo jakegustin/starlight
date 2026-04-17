@@ -7,6 +7,7 @@ directly enqueuing pre-built messages onto the shared queue, simulating what
 SerialConnection._process_line() would produce after parsing.
 """
 
+import logging
 import queue
 import threading
 import time
@@ -14,6 +15,7 @@ import pytest
 
 from controller.config import ControllerConfig
 from controller.controller import Controller
+from controller.serial_connection import SerialConnection
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -227,3 +229,20 @@ class TestGetState:
         _pump(ctrl, q, 2)
         state = ctrl.get_state()
         assert state["zones"] == ["rec-A", "rec-B"]
+
+
+def test_serial_connection_start_handles_oserror(monkeypatch, caplog):
+    """Invalid port open errors should be caught and not crash the caller."""
+    caplog.set_level(logging.ERROR)
+
+    def fake_serial_constructor(*args, **kwargs):
+        raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr("controller.serial_connection.serial.Serial", fake_serial_constructor)
+
+    q = queue.Queue()
+    conn = SerialConnection("/dev/fake", 115200, q)
+    conn.start()
+
+    assert "failed to open /dev/fake" in caplog.text
+    assert not conn.is_running

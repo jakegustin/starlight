@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 # Glob patterns matching ESP32 USB serial ports on macOS.
 _MACOS_PORT_PATTERNS: List[str] = [
-   # "/dev/cu.usbserial*",
-   # "/dev/cu.SLAB_USBtoUART*",
-   # "/dev/cu.wchusbserial*",
-   # "/dev/cu.usbmodem*",
+    "/dev/cu.usbserial*",
+    "/dev/cu.SLAB_USBtoUART*",
+    "/dev/cu.wchusbserial*",
+    "/dev/cu.usbmodem*",
     "/dev/tty.usbserial*",
 ]
 

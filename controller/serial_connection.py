@@ -57,11 +57,15 @@ class SerialConnection:
 
             # Attempt to create the Serial connection, logging errors that come up in the process
             try:
-                self._serial = serial.Serial(self.port, self.baud_rate, timeout=1.0)
+                self._serial = serial.Serial(
+                    port=self.port,
+                    baudrate=self.baud_rate,
+                    timeout=1.0,
+                )
                 logger.info(
                     "SerialConnection: opened %s at %d baud", self.port, self.baud_rate
                 )
-            except serial.SerialException as exc:
+            except (serial.SerialException, OSError, ValueError) as exc:
                 logger.error(
                     "SerialConnection: failed to open %s — %s", self.port, exc
                 )

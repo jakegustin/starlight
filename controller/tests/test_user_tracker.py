@@ -192,7 +192,26 @@ class TestUserTrackerEviction:
 
         assert "uuid-1" not in tracker.get_all_users()
         assert "uuid-2" in tracker.get_all_users()
+    def test_eviction_updates_remaining_zone_user_lighting(self):
+        tracker, _, _ = _make_tracker(threshold=-70.0, timeout=0.05)
+        tracker.controller._send_lighting = tracker.controller._send_lighting
 
+        _feed(tracker, "uuid-1", "rec-A", -65.0, count=5)
+        _feed(tracker, "uuid-2", "rec-A", -65.0, count=5)
+
+        # uuid-2 should be the current lighting target after assignment
+        tracker.controller._send_lighting.assert_called_with("rec-A", "uuid-2")
+
+        tracker.controller._send_lighting.reset_mock()
+
+        # Evict uuid-2 and expect lighting to fall back to uuid-1
+        _feed(tracker, "uuid-2", "rec-A", -90.0, count=3)
+        time.sleep(0.15)
+        _feed(tracker, "uuid-2", "rec-A", -90.0)
+
+        assert "uuid-2" not in tracker.get_all_users()
+        assert "uuid-1" in tracker.get_all_users()
+        tracker.controller._send_lighting.assert_called_with("rec-A", "uuid-1")
 
 # ── Query methods ─────────────────────────────────────────────────────────────
 
