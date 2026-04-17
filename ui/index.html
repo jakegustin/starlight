@@ -535,7 +535,23 @@
 const WS_URL = `ws://${location.hostname}:8765`;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_LOG_LINES = 200;
-const MAX_RSSI_SAMPLES = 240;
+const MAX_RSSI_SAMPLES = 2000;
+const MAX_PLOT_USERS = 2;
+const RSSI_WINDOW_SECONDS = 10;
+
+// Fixed per-user styles (no hash-based color selection).
+const USER_PLOT_STYLES = [
+  {
+    label: 'User 1',
+    raw: { color: 'rgba(88, 166, 255, 0.85)', width: 1.75, dash: [6, 4] },
+    filtered: { color: 'rgba(88, 166, 255, 1)', width: 2.5, dash: [] },
+  },
+  {
+    label: 'User 2',
+    raw: { color: 'rgba(255, 121, 198, 0.85)', width: 1.75, dash: [6, 4] },
+    filtered: { color: 'rgba(255, 121, 198, 1)', width: 2.5, dash: [] },
+  },
+];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // State
@@ -545,6 +561,7 @@ let state = { receivers: {}, zones: [], users_by_zone: {}, live_plot: false };
 let ws = null;
 let reconnectTimer = null;
 let rssiHistory = {};
+let receiverUserSlots = {};
 
 // Drag-and-drop state
 let dragSrcIndex = null;
@@ -714,23 +731,113 @@ function renderQueue() {
 function ingestRssiSample(sample) {
   const receiverId = sample.receiver_id || sample.id;
   if (!receiverId) return;
+  const userId = sample.uuid || 'unknown';
+  const sampleTs = Number(sample.timestamp) || Date.now() / 1000;
 
   if (!rssiHistory[receiverId]) {
     rssiHistory[receiverId] = [];
   }
 
   rssiHistory[receiverId].push({
-    ts: sample.timestamp || Date.now() / 1000,
+    ts: sampleTs,
     raw: Number(sample.raw_rssi),
     filtered: Number(sample.filtered_rssi),
     average: Number(sample.average_rssi),
-    uuid: sample.uuid || 'unknown',
+    uuid: userId,
     rawMode: Boolean(sample.raw_mode),
   });
 
-  if (rssiHistory[receiverId].length > MAX_RSSI_SAMPLES) {
-    rssiHistory[receiverId].splice(0, rssiHistory[receiverId].length - MAX_RSSI_SAMPLES);
+  pruneReceiverHistory(receiverId, sampleTs);
+
+  // Keep stable user slots (up to 2 users per receiver) so colors remain consistent.
+  if (!receiverUserSlots[receiverId]) {
+    receiverUserSlots[receiverId] = [];
   }
+  const cutoffTs = sampleTs - RSSI_WINDOW_SECONDS;
+  receiverUserSlots[receiverId] = receiverUserSlots[receiverId]
+    .filter((slotUser) => getLastSeenTimestamp(receiverId, slotUser) >= cutoffTs);
+
+  const slots = receiverUserSlots[receiverId];
+  const existingIdx = slots.indexOf(userId);
+  if (existingIdx === -1) {
+    if (slots.length < MAX_PLOT_USERS) {
+      slots.push(userId);
+    } else {
+      // Replace least recently seen slot.
+      let replaceIdx = 0;
+      let oldestTs = Number.POSITIVE_INFINITY;
+      slots.forEach((slotUser, idx) => {
+        const lastTs = getLastSeenTimestamp(receiverId, slotUser);
+        if (lastTs < oldestTs) {
+          oldestTs = lastTs;
+          replaceIdx = idx;
+        }
+      });
+      slots[replaceIdx] = userId;
+    }
+  }
+}
+
+function pruneReceiverHistory(receiverId, referenceTs) {
+  const samples = rssiHistory[receiverId] || [];
+  const cutoffTs = referenceTs - RSSI_WINDOW_SECONDS;
+  const firstFreshIdx = samples.findIndex((sample) => Number(sample.ts) >= cutoffTs);
+
+  if (firstFreshIdx > 0) {
+    samples.splice(0, firstFreshIdx);
+  } else if (firstFreshIdx === -1 && samples.length > 1) {
+    // Keep only the latest point if everything is stale.
+    samples.splice(0, samples.length - 1);
+  }
+
+  if (samples.length > MAX_RSSI_SAMPLES) {
+    samples.splice(0, samples.length - MAX_RSSI_SAMPLES);
+  }
+}
+
+function getLastSeenTimestamp(receiverId, userId) {
+  const samples = rssiHistory[receiverId] || [];
+  for (let i = samples.length - 1; i >= 0; i--) {
+    if (samples[i].uuid === userId) return Number(samples[i].ts) || 0;
+  }
+  return 0;
+}
+
+function getTrackedUsersForReceiver(receiverId, samples) {
+  const latestTs = samples.length ? (Number(samples[samples.length - 1].ts) || Date.now() / 1000) : Date.now() / 1000;
+  const cutoffTs = latestTs - RSSI_WINDOW_SECONDS;
+  const windowSamples = samples.filter((sample) => Number(sample.ts) >= cutoffTs);
+
+  const slots = receiverUserSlots[receiverId] || [];
+
+  // Drop stale users from slots.
+  const freshUserSet = new Set(windowSamples.map((sample) => sample.uuid));
+  const freshSlots = slots.filter((uuid) => freshUserSet.has(uuid));
+  receiverUserSlots[receiverId] = freshSlots;
+
+  // If we don't have full slots yet, fill from most-recent unique samples.
+  if (freshSlots.length < MAX_PLOT_USERS) {
+    const seen = new Set(freshSlots);
+    for (let i = windowSamples.length - 1; i >= 0; i--) {
+      const uuid = windowSamples[i].uuid;
+      if (!seen.has(uuid)) {
+        freshSlots.push(uuid);
+        seen.add(uuid);
+        if (freshSlots.length >= MAX_PLOT_USERS) break;
+      }
+    }
+    receiverUserSlots[receiverId] = freshSlots.slice(0, MAX_PLOT_USERS);
+  }
+
+  return (receiverUserSlots[receiverId] || []).slice(0, MAX_PLOT_USERS);
+}
+
+function getLatestSampleForUser(samples, userId) {
+  if (!userId) return null;
+  for (let i = samples.length - 1; i >= 0; i--) {
+    if (samples[i].uuid === userId) return samples[i];
+  }
+  return null;
 }
 
 function renderRssiPlots() {
@@ -753,7 +860,24 @@ function renderRssiPlots() {
 
   zones.forEach((receiverId, index) => {
     const samples = rssiHistory[receiverId] || [];
-    const latest = samples.length ? samples[samples.length - 1] : null;
+    const trackedUsers = getTrackedUsersForReceiver(receiverId, samples);
+
+    const headerReadouts = USER_PLOT_STYLES.map((style, slotIdx) => {
+      const uuid = trackedUsers[slotIdx];
+      if (!uuid) return `${style.label}: waiting`;
+      const latestForUser = getLatestSampleForUser(samples, uuid);
+      if (!latestForUser) return `${style.label}: waiting`;
+      return `${style.label} raw ${latestForUser.raw.toFixed(1)} dBm · filtered ${latestForUser.filtered.toFixed(1)} dBm`;
+    }).join(' | ');
+
+    const legendHtml = USER_PLOT_STYLES.map((style, slotIdx) => {
+      const uuid = trackedUsers[slotIdx];
+      const name = uuid ? `${style.label} (${escHtml(uuid.slice(0, 8))}…)` : style.label;
+      return `
+        <span class="legend-item"><span class="legend-swatch" style="background:${style.raw.color}"></span>${name} raw</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:${style.filtered.color}"></span>${name} filtered</span>
+      `;
+    }).join('');
 
     const card = document.createElement('div');
     card.className = 'rssi-chart-card';
@@ -761,13 +885,12 @@ function renderRssiPlots() {
       <div class="rssi-chart-header">
         <div class="rssi-chart-name">Z${index} · ${escHtml(receiverId)}</div>
         <div class="rssi-chart-meta">
-          ${latest ? `raw ${latest.raw.toFixed(1)} dBm · filtered ${latest.filtered.toFixed(1)} dBm` : 'waiting for samples'}
+          ${escHtml(headerReadouts)}
         </div>
       </div>
       <canvas class="rssi-chart-canvas" data-receiver="${escHtml(receiverId)}"></canvas>
       <div class="rssi-legend">
-        <span class="legend-item"><span class="legend-swatch raw"></span>raw RSSI</span>
-        <span class="legend-item"><span class="legend-swatch filtered"></span>filtered RSSI</span>
+        ${legendHtml}
       </div>
     `;
     list.appendChild(card);
@@ -780,13 +903,15 @@ function renderRssiPlots() {
       const canvas = Array.from(body.querySelectorAll('canvas[data-receiver]'))
         .find((node) => node.dataset.receiver === receiverId);
       if (canvas) {
-        drawRssiChart(canvas, rssiHistory[receiverId] || []);
+        const samples = rssiHistory[receiverId] || [];
+        const trackedUsers = getTrackedUsersForReceiver(receiverId, samples);
+        drawRssiChart(canvas, samples, trackedUsers);
       }
     });
   });
 }
 
-function drawRssiChart(canvas, samples) {
+function drawRssiChart(canvas, samples, trackedUsers) {
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth || 1;
   const height = canvas.clientHeight || 1;
@@ -806,8 +931,22 @@ function drawRssiChart(canvas, samples) {
     return;
   }
 
+  const activeUsers = (trackedUsers || []).slice(0, MAX_PLOT_USERS);
+  const latestTs = Number(samples[samples.length - 1].ts) || Date.now() / 1000;
+  const cutoffTs = latestTs - RSSI_WINDOW_SECONDS;
+  const windowSamples = samples.filter((sample) => Number(sample.ts) >= cutoffTs);
+
+  if (!windowSamples.length) {
+    ctx.fillStyle = 'rgba(125, 133, 144, 0.8)';
+    ctx.font = '12px var(--font)';
+    ctx.fillText('No recent RSSI samples', 16, height / 2);
+    ctx.restore();
+    return;
+  }
+
   const values = [];
-  samples.forEach((sample) => {
+  windowSamples.forEach((sample) => {
+    if (!activeUsers.includes(sample.uuid)) return;
     if (Number.isFinite(sample.raw)) values.push(sample.raw);
     if (Number.isFinite(sample.filtered)) values.push(sample.filtered);
   });
@@ -830,12 +969,20 @@ function drawRssiChart(canvas, samples) {
   const pad = { top: 10, right: 12, bottom: 20, left: 44 };
   const plotWidth = Math.max(1, width - pad.left - pad.right);
   const plotHeight = Math.max(1, height - pad.top - pad.bottom);
-  const xStep = samples.length > 1 ? plotWidth / (samples.length - 1) : plotWidth;
+  const minTs = Number(windowSamples[0].ts) || cutoffTs;
+  const maxTs = Number(windowSamples[windowSamples.length - 1].ts) || latestTs;
+  const tsSpan = Math.max(0.001, maxTs - minTs);
 
   function yFor(value) {
     const clamped = Math.max(min, Math.min(max, value));
     const pct = (clamped - min) / (max - min);
     return pad.top + (1 - pct) * plotHeight;
+  }
+
+  function xFor(ts) {
+    const t = Number(ts);
+    if (!Number.isFinite(t)) return pad.left;
+    return pad.left + ((t - minTs) / tsSpan) * plotWidth;
   }
 
   // Grid and ticks
@@ -854,28 +1001,47 @@ function drawRssiChart(canvas, samples) {
     ctx.fillText(`${Math.round(value)}`, 8, y + 3);
   }
 
-  function drawSeries(getValue, strokeStyle, widthPx, alpha) {
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = widthPx;
-    ctx.globalAlpha = alpha;
+  function drawUserSeries(userId, getValue, style) {
+    if (!userId) return;
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.width;
+    ctx.setLineDash(style.dash || []);
+    ctx.globalAlpha = 1;
+
+    let hasAny = false;
+    let penDown = false;
     ctx.beginPath();
-    samples.forEach((sample, index) => {
+
+    windowSamples.forEach((sample) => {
+      if (sample.uuid !== userId) return;
+
       const value = getValue(sample);
-      if (!Number.isFinite(value)) return;
-      const x = samples.length > 1 ? pad.left + index * xStep : pad.left + plotWidth / 2;
+      if (!Number.isFinite(value)) {
+        penDown = false;
+        return;
+      }
+
+      const x = xFor(sample.ts);
       const y = yFor(value);
-      if (index === 0) {
+
+      if (!penDown) {
         ctx.moveTo(x, y);
+        penDown = true;
       } else {
         ctx.lineTo(x, y);
       }
+      hasAny = true;
     });
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+
+    if (hasAny) ctx.stroke();
+    ctx.setLineDash([]);
   }
 
-  drawSeries((sample) => sample.raw, 'rgba(248, 81, 73, 0.9)', 1.75, 0.55);
-  drawSeries((sample) => sample.filtered, 'rgba(63, 185, 80, 0.95)', 2.5, 0.95);
+  activeUsers.forEach((userId, slotIdx) => {
+    const style = USER_PLOT_STYLES[slotIdx] || USER_PLOT_STYLES[0];
+    drawUserSeries(userId, (sample) => sample.raw, style.raw);
+    drawUserSeries(userId, (sample) => sample.filtered, style.filtered);
+  });
 
   ctx.restore();
 }
