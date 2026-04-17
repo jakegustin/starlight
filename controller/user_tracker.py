@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ENTRY_BUFFER_SECONDS = 1.0
+
 
 @dataclass
 class UserState:
@@ -33,7 +35,12 @@ class UserState:
     """
     uuid: str
     zone_receiver_id: Optional[str] = None
+    priority: int = 0
+    assigned_at: float = field(default_factory=time.monotonic)
     below_threshold_since: Optional[float] = None
+    entry_since: Optional[float] = None
+    entry_seen_receivers: set[str] = field(default_factory=set)
+    lighting_active: bool = False
     last_seen: float = field(default_factory=time.monotonic)
 
 
@@ -59,6 +66,7 @@ class UserTracker:
         rssi_timeout_threshold: float,
         rssi_timeout_duration: float,
         no_ratchet: bool = False,
+        entry_buffer_seconds: float = DEFAULT_ENTRY_BUFFER_SECONDS,
     ):
         """
         Initialise the user tracker.
@@ -79,6 +87,7 @@ class UserTracker:
         self.rssi_timeout_threshold = rssi_timeout_threshold
         self.rssi_timeout_duration = rssi_timeout_duration
         self.no_ratchet = no_ratchet
+        self.entry_buffer_seconds = entry_buffer_seconds
 
         self._users: Dict[str, UserState] = {}
         self._lock = threading.RLock()
@@ -87,7 +96,13 @@ class UserTracker:
     # Public entry point
     # ──────────────────────────────────────────────────────────────────────────
 
-    def process_rssi(self, uuid: str, receiver_id: str, raw_rssi: float):
+    def process_rssi(
+        self,
+        uuid: str,
+        receiver_id: str,
+        raw_rssi: float,
+        priority: int = 0,
+    ):
         """
         Handle a new RSSI observation for a user from a specific receiver.
 
@@ -95,6 +110,7 @@ class UserTracker:
             uuid: BLE advertiser UUID (= user identifier).
             receiver_id: Receiver that heard the advertisement.
             raw_rssi: Raw RSSI measurement (dBm).
+            priority: Optional user priority. Higher values win lighting conflicts.
         """
         # Update filter & rolling average now
         self.rssi_processor.ingest(uuid, receiver_id, raw_rssi)
@@ -103,11 +119,11 @@ class UserTracker:
             # Retrieve the user instance associated with the UUID
             user = self._get_or_create_user(uuid)
             user.last_seen = time.monotonic()
+            user.priority = priority
 
-            # If user has no current zone, assume they are at the first zone
-            # NOTE: Should update this to assign them to the closest zone!
             if user.zone_receiver_id is None:
-                self._assign_nearest_zone(user)
+                self._record_entry_sighting(user, receiver_id)
+                self._try_activate_entry(user)
                 return
 
             # Check to see if the user should be evicted from the queue due to timeout
@@ -186,9 +202,32 @@ class UserTracker:
             logger.info("UserTracker: new user detected uuid=%s", uuid)
         return self._users[uuid]
 
+    def _record_entry_sighting(self, user: UserState, receiver_id: str):
+        """Record a receiver sighting for a new or returning user."""
+        if user.entry_since is None:
+            user.entry_since = time.monotonic()
+            user.entry_seen_receivers.clear()
+            user.lighting_active = False
+
+        user.entry_seen_receivers.add(receiver_id)
+
+    def _try_activate_entry(self, user: UserState) -> bool:
+        """Activate a newly entered user after the buffer window has elapsed."""
+        if user.zone_receiver_id is not None or user.entry_since is None:
+            return False
+
+        if time.monotonic() - user.entry_since < self.entry_buffer_seconds:
+            return False
+
+        self._assign_nearest_zone(user)
+        user.entry_since = None
+        user.entry_seen_receivers.clear()
+        user.lighting_active = True
+        return True
+
     def _assign_nearest_zone(self, user: UserState):
         """
-        Place user at the zone where their current RSSI is strongest.
+        Place user at the earliest zone known to have seen them.
         Falls back to zone 0 if no signal data exists yet.
 
         REQUIRES LOCK TO BE HELD!
@@ -202,24 +241,51 @@ class UserTracker:
 
         averages = self.rssi_processor.get_all_averages_for_uuid(user.uuid)
         best_zone = None
-        best_avg = None
-        for zone in zones:
-            avg = averages.get(zone)
-            if avg is not None and (best_avg is None or avg > best_avg):
-                best_avg = avg
-                best_zone = zone
+        if user.entry_seen_receivers:
+            for zone in zones:
+                if zone in user.entry_seen_receivers:
+                    best_zone = zone
+                    break
+        else:
+            for zone in zones:
+                if averages.get(zone) is not None:
+                    best_zone = zone
+                    break
 
         if best_zone is None:
             best_zone = zones[0]
 
+        previous_target = self._get_zone_lighting_target(best_zone)
+
         user.zone_receiver_id = best_zone
+        user.assigned_at = time.monotonic()
         user.below_threshold_since = None
         zone_idx = zones.index(best_zone)
         logger.info(
             "UserTracker: uuid=%s → assigned to zone %d (receiver='%s')",
             user.uuid, zone_idx, best_zone,
         )
-        self.controller._send_lighting(best_zone, user.uuid)
+
+        if previous_target is None or user.priority > self._users[previous_target].priority:
+            self.controller._send_lighting(best_zone, user.uuid)
+
+    def _get_zone_lighting_target(self, receiver_id: str) -> Optional[str]:
+        """Return the highest-priority lighting target for a zone."""
+        zone_users = self.get_users_by_zone().get(receiver_id, [])
+        if not zone_users:
+            return None
+
+        best = None
+        for uuid in zone_users:
+            candidate = self._users[uuid]
+            if best is None:
+                best = candidate
+            elif candidate.priority > best.priority:
+                best = candidate
+            elif candidate.priority == best.priority:
+                if candidate.assigned_at < best.assigned_at:
+                    best = candidate
+        return best.uuid
 
     def _check_eviction(self, user: UserState) -> bool:
         """
@@ -337,14 +403,19 @@ class UserTracker:
         """
         old_receiver = user.zone_receiver_id
         user.zone_receiver_id = new_receiver
+        user.assigned_at = time.monotonic()
         user.below_threshold_since = None
 
-        zone_map = self.get_users_by_zone()
-        if old_receiver not in zone_map or len(zone_map[old_receiver]) == 0:
+        old_target = self._get_zone_lighting_target(old_receiver)
+        if old_target is None:
             self.controller._send_lighting(old_receiver, "")
         else:
-            self.controller._send_lighting(old_receiver, zone_map[old_receiver][0])
-        self.controller._send_lighting(new_receiver, user.uuid)
+            self.controller._send_lighting(old_receiver, old_target)
+
+        # Reevaluate lighting after the move and send the highest-priority target.
+        target = self._get_zone_lighting_target(new_receiver)
+        if target is not None:
+            self.controller._send_lighting(new_receiver, target)
 
 
 
@@ -353,10 +424,9 @@ class UserTracker:
         user = self._users.pop(uuid, None)
         self.rssi_processor.remove_uuid(uuid)
         if user and user.zone_receiver_id is not None:
-            zone_map = self.get_users_by_zone()
-            remaining = zone_map.get(user.zone_receiver_id, [])
-            if remaining:
-                self.controller._send_lighting(user.zone_receiver_id, remaining[0])
+            target = self._get_zone_lighting_target(user.zone_receiver_id)
+            if target is not None:
+                self.controller._send_lighting(user.zone_receiver_id, target)
             else:
                 self.controller._send_lighting(user.zone_receiver_id, "")
         logger.debug("UserTracker: uuid=%s evicted and state purged", uuid)

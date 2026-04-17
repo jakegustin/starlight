@@ -23,6 +23,7 @@ def _make_tracker(
     threshold: float = -85.0,
     timeout: float = 10.0,
     receivers: list = None,
+    entry_buffer_seconds: float = 0.0,
 ):
     """
     Build a UserTracker backed by a near-passthrough RSSIProcessor (very low
@@ -43,14 +44,15 @@ def _make_tracker(
         hysteresis=hysteresis,
         rssi_timeout_threshold=threshold,
         rssi_timeout_duration=timeout,
+        entry_buffer_seconds=entry_buffer_seconds,
     )
     return tracker, proc, zm
 
 
-def _feed(tracker, uuid, receiver, rssi, count=1):
+def _feed(tracker, uuid, receiver, rssi, count=1, priority=0):
     """Convenience: send *count* identical RSSI observations."""
     for _ in range(count):
-        tracker.process_rssi(uuid, receiver, rssi)
+        tracker.process_rssi(uuid, receiver, rssi, priority=priority)
 
 
 # ── Zone assignment ───────────────────────────────────────────────────────────
@@ -62,10 +64,87 @@ class TestUserTrackerZoneAssignment:
         assert tracker.get_all_users()["uuid-1"] == "rec-A"
 
     def test_new_user_seen_first_on_second_receiver_assigned_to_nearest_zone(self):
-        """First data from rec-B assigns user to rec-B (nearest/strongest zone)."""
+        """First data from rec-B assigns user to rec-B."""
         tracker, _, _ = _make_tracker()
         _feed(tracker, "uuid-1", "rec-B", -65.0)
         assert tracker.get_all_users()["uuid-1"] == "rec-B"
+
+    def test_new_user_with_multiple_zone_samples_assigns_to_first_seen_zone(
+        self, monkeypatch
+    ):
+        """Give a newly entered user a buffer window, then assign the earliest zone."""
+        tracker, _, _ = _make_tracker(entry_buffer_seconds=3.0)
+        tracker.controller._send_lighting = MagicMock()
+
+        current_time = [1_000.0]
+        monkeypatch.setattr("controller.user_tracker.time.monotonic", lambda: current_time[0])
+
+        # First sighting at rec-C, then rec-B within the buffer window.
+        _feed(tracker, "uuid-1", "rec-C", -65.0)
+        current_time[0] += 1.0
+        _feed(tracker, "uuid-1", "rec-B", -70.0)
+
+        # Buffer still active, so lighting should not yet be sent.
+        tracker.controller._send_lighting.assert_not_called()
+
+        # After the buffer window ends, the user is assigned to the earliest receiver seen.
+        current_time[0] += 2.1
+        _feed(tracker, "uuid-1", "rec-B", -70.0)
+        tracker.controller._send_lighting.assert_called_once_with("rec-B", "uuid-1")
+        assert tracker.get_all_users()["uuid-1"] == "rec-B"
+
+    def test_zone_lighting_does_not_override_existing_zone_user(self):
+        tracker, _, _ = _make_tracker(entry_buffer_seconds=0.0)
+        tracker.controller._send_lighting = MagicMock()
+
+        # Priority user occupies zone C first.
+        _feed(tracker, "priority", "rec-C", -65.0, priority=10)
+        # Standard user occupies zone B.
+        _feed(tracker, "standard", "rec-B", -65.0, priority=0)
+
+        # Standard user later moves into zone C; existing lighting should remain.
+        _feed(tracker, "standard", "rec-C", -55.0, count=10)
+
+        # Ensure rec-C lighting was never reassigned to standard user.
+        assert all(call.args != ("rec-C", "standard") for call in tracker.controller._send_lighting.call_args_list)
+        assert tracker.get_all_users()["priority"] == "rec-C"
+        assert tracker.get_all_users()["standard"] == "rec-C"
+
+    def test_higher_priority_user_overrides_lower_priority_zone(self):
+        tracker, _, _ = _make_tracker(entry_buffer_seconds=0.0)
+        tracker.controller._send_lighting = MagicMock()
+
+        _feed(tracker, "standard", "rec-C", -65.0, priority=0)
+        _feed(tracker, "high", "rec-C", -65.0, priority=10)
+
+        # high priority user should become the lighting target.
+        assert tracker.controller._send_lighting.call_args_list[-1].args == ("rec-C", "high")
+        assert tracker.get_all_users()["high"] == "rec-C"
+        assert tracker.get_all_users()["standard"] == "rec-C"
+
+    def test_lower_priority_user_does_not_override_higher_priority_zone(self):
+        tracker, _, _ = _make_tracker(entry_buffer_seconds=0.0)
+        tracker.controller._send_lighting = MagicMock()
+
+        _feed(tracker, "high", "rec-C", -65.0, priority=10)
+        _feed(tracker, "standard", "rec-B", -65.0, priority=0)
+        _feed(tracker, "standard", "rec-C", -55.0, count=10, priority=0)
+
+        assert all(call.args != ("rec-C", "standard") for call in tracker.controller._send_lighting.call_args_list)
+        assert tracker.get_all_users()["high"] == "rec-C"
+        assert tracker.get_all_users()["standard"] == "rec-C"
+
+    def test_equal_priority_user_does_not_override_existing_zone_lighting(self):
+        tracker, _, _ = _make_tracker(entry_buffer_seconds=0.0)
+        tracker.controller._send_lighting = MagicMock()
+
+        _feed(tracker, "first", "rec-C", -65.0, priority=1)
+        _feed(tracker, "second", "rec-B", -65.0, priority=1)
+        _feed(tracker, "second", "rec-C", -55.0, count=10, priority=1)
+
+        assert all(call.args != ("rec-C", "second") for call in tracker.controller._send_lighting.call_args_list)
+        assert tracker.get_all_users()["first"] == "rec-C"
+        assert tracker.get_all_users()["second"] == "rec-C"
 
     def test_no_zones_registered_does_not_crash(self):
         tracker, _, _ = _make_tracker(receivers=[])
@@ -106,6 +185,17 @@ class TestUserTrackerAdvancement:
         _feed(tracker, "uuid-1", "rec-B", -55.0, count=10)
         _feed(tracker, "uuid-1", "rec-C", -45.0, count=10)
         assert tracker.get_all_users()["uuid-1"] == "rec-C"
+
+    def test_single_user_zone_move_updates_new_zone_lighting(self):
+        tracker, _, _ = _make_tracker(hysteresis=3.0, entry_buffer_seconds=0.0)
+        tracker.controller._send_lighting = MagicMock()
+
+        _feed(tracker, "uuid-1", "rec-A", -65.0, count=5)
+        tracker.controller._send_lighting.reset_mock()
+
+        _feed(tracker, "uuid-1", "rec-B", -55.0, count=10)
+        assert tracker.controller._send_lighting.call_args_list[-1].args == ("rec-B", "uuid-1")
+        assert tracker.get_all_users()["uuid-1"] == "rec-B"
 
     def test_user_at_last_zone_does_not_advance(self):
         tracker, _, _ = _make_tracker(hysteresis=3.0)
@@ -197,10 +287,12 @@ class TestUserTrackerEviction:
         tracker.controller._send_lighting = tracker.controller._send_lighting
 
         _feed(tracker, "uuid-1", "rec-A", -65.0, count=5)
+        tracker.controller._send_lighting.reset_mock()
+
         _feed(tracker, "uuid-2", "rec-A", -65.0, count=5)
 
-        # uuid-2 should be the current lighting target after assignment
-        tracker.controller._send_lighting.assert_called_with("rec-A", "uuid-2")
+        # With equal priority, the existing zone lighting target stays in place.
+        tracker.controller._send_lighting.assert_not_called()
 
         tracker.controller._send_lighting.reset_mock()
 

@@ -47,6 +47,14 @@ class Controller:
         """
         self.config = config
 
+        # Priority fallback for inbound data messages that do not explicitly carry
+        # a numeric priority field. Earlier UUIDs in the whitelist have higher
+        # priority than later UUIDs.
+        self._uuid_priority: Dict[str, int] = {
+            self._normalise_uuid(uuid): len(config.uuid_whitelist) - idx
+            for idx, uuid in enumerate(config.uuid_whitelist)
+        }
+
         # Shared message queue for all SerialConnection reader threads
         self._queue: queue.Queue = queue.Queue()
 
@@ -94,6 +102,11 @@ class Controller:
 
         # Initialize the _heartbeat_thread to be nothing. This gets updated later
         self._heartbeat_thread: Optional[threading.Thread] = None
+
+    @staticmethod
+    def _normalise_uuid(uuid: str) -> str:
+        """Normalise UUIDs for consistent map lookup."""
+        return str(uuid).strip().lower()
 
     # ──────────────────────────────────────────────────────────────────────────
     # Controller Lifecycle
@@ -254,8 +267,25 @@ class Controller:
             )
             return
 
+        # Priority can be sent under different field names depending on firmware.
+        priority = (
+            message.get("priority")
+            if "priority" in message
+            else message.get("user_priority", message.get("prio", message.get("rank")))
+        )
+
+        if priority is None:
+            priority = self._uuid_priority.get(self._normalise_uuid(uuid), 0)
+
+        if isinstance(priority, bool):
+            priority = int(priority)
+        try:
+            priority = int(priority)
+        except (ValueError, TypeError):
+            priority = self._uuid_priority.get(self._normalise_uuid(uuid), 0)
+
         # Valid data packet received, have the RSSI processor handle it.
-        self._user_tracker.process_rssi(uuid, receiver_id, rssi)
+        self._user_tracker.process_rssi(uuid, receiver_id, rssi, priority=priority)
 
         # Update the UI accordingly
         self._broadcast_state()

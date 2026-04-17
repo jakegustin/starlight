@@ -41,6 +41,7 @@ def controller_and_queue(cfg):
     serial ports or WebSocket servers, then inject messages via its internal queue.
     """
     ctrl = Controller(cfg)
+    ctrl._user_tracker.entry_buffer_seconds = 0.0
 
     # Prevent SerialManager from scanning real ports.
     ctrl._serial_manager.start = lambda: None
@@ -175,6 +176,21 @@ class TestDataHandling:
         _pump(ctrl, q, 1)
         # Should not raise and should not register anything
         assert len(ctrl._receivers) == 0
+
+    def test_whitelist_order_priority_used_when_message_has_no_priority(self, controller_and_queue):
+        ctrl, q = controller_and_queue
+        ctrl._send_lighting = lambda *args, **kwargs: None
+
+        # uuid-1 is earlier in whitelist than uuid-2, so it should outrank uuid-2
+        q.put(_heartbeat("rec-A"))
+        q.put(_heartbeat("rec-B"))
+        q.put(_data("rec-B", "uuid-2", -65.0))
+        q.put(_data("rec-A", "uuid-1", -65.0))
+        q.put(_data("rec-B", "uuid-1", -55.0))
+        _pump(ctrl, q, 5)
+
+        target = ctrl._user_tracker._get_zone_lighting_target("rec-B")
+        assert target == "uuid-1"
 
 
 # ── Receiver heartbeat monitor ────────────────────────────────────────────────
