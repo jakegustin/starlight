@@ -6,6 +6,7 @@ import logging
 import queue
 import threading
 import time
+from dataclasses import asdict
 from typing import Dict, List, Optional
 
 from controller.config import ControllerConfig
@@ -102,6 +103,8 @@ class Controller:
 
         # Initialize the _heartbeat_thread to be nothing. This gets updated later
         self._heartbeat_thread: Optional[threading.Thread] = None
+
+        self._live_plot_enabled = config.live_plot
 
     @staticmethod
     def _normalise_uuid(uuid: str) -> str:
@@ -285,10 +288,18 @@ class Controller:
             priority = self._uuid_priority.get(self._normalise_uuid(uuid), 0)
 
         # Valid data packet received, have the RSSI processor handle it.
-        self._user_tracker.process_rssi(uuid, receiver_id, rssi, priority=priority)
+        sample = self._user_tracker.process_rssi(uuid, receiver_id, rssi, priority=priority)
 
         # Update the UI accordingly
         self._broadcast_state()
+
+        if self._live_plot_enabled:
+            sample_payload = asdict(sample)
+            sample_payload.update({
+                "type": "rssi_sample",
+                "timestamp": message.get("timestamp", time.time()),
+            })
+            self._ws_server.broadcast(sample_payload)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Heartbeat monitor
@@ -450,6 +461,7 @@ class Controller:
             "receivers": receivers_snapshot,
             "zones": self._zone_manager.get_zones(),
             "users_by_zone": self._user_tracker.get_users_by_zone(),
+            "live_plot": self.config.live_plot,
         }
 
     def _broadcast_state(self):

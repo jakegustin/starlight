@@ -60,6 +60,7 @@ Key flags:
 | `--rssi-timeout` | 10.0 s | Eviction timer duration |
 | `--ws-port` | 8765 | WebSocket port |
 | `--ui-port` | 8080 | Config UI HTTP port |
+| `--live-plot` | false | Stream raw and filtered RSSI samples to the browser UI |
 | `--log-level` | INFO | DEBUG / INFO / WARNING / ERROR |
 
 ## Architecture

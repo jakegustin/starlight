@@ -5,6 +5,7 @@ the smoothed signal values consumed by the UserTracker for zone decisions.
 
 import logging
 import threading
+from dataclasses import dataclass
 from collections import deque
 from typing import Dict, Optional, Tuple
 
@@ -14,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 # Custom type used for (uuid, receiver_id) dictionary keys.
 _PairKey = Tuple[str, str]
+
+
+@dataclass(frozen=True)
+class RSSISample:
+    """Snapshot of one RSSI observation and its processed values."""
+
+    uuid: str
+    receiver_id: str
+    raw_rssi: float
+    filtered_rssi: float
+    average_rssi: float
+    raw_mode: bool
 
 
 class RSSIProcessor:
@@ -76,6 +89,17 @@ class RSSIProcessor:
             receiver_id: ID of the BLE receiver that captured the advertisement.
             raw_rssi: Raw RSSI value (dBm).
         """
+        return self.observe(uuid, receiver_id, raw_rssi).average_rssi
+
+    def observe(self, uuid: str, receiver_id: str, raw_rssi: float) -> RSSISample:
+        """
+        Process a raw RSSI reading and return its raw, filtered, and averaged values.
+
+        Args:
+            uuid: BLE advertiser UUID identifying the user.
+            receiver_id: ID of the BLE receiver that captured the advertisement.
+            raw_rssi: Raw RSSI value (dBm).
+        """
         key = (uuid, receiver_id)
 
         with self._lock:
@@ -92,7 +116,14 @@ class RSSIProcessor:
                     "RSSIProcessor: uuid=%s receiver=%s raw=%.1f (raw mode)",
                     uuid, receiver_id, raw_rssi,
                 )
-                return raw_rssi
+                return RSSISample(
+                    uuid=uuid,
+                    receiver_id=receiver_id,
+                    raw_rssi=raw_rssi,
+                    filtered_rssi=raw_rssi,
+                    average_rssi=raw_rssi,
+                    raw_mode=True,
+                )
 
             # Create filter/window on first reading, configuring the filter appropriately.
             if key not in self._filters:
@@ -117,7 +148,14 @@ class RSSIProcessor:
                 "RSSIProcessor: uuid=%s receiver=%s raw=%.1f filtered=%.2f avg=%.2f",
                 uuid, receiver_id, raw_rssi, filtered, avg,
             )
-            return avg
+            return RSSISample(
+                uuid=uuid,
+                receiver_id=receiver_id,
+                raw_rssi=raw_rssi,
+                filtered_rssi=filtered,
+                average_rssi=avg,
+                raw_mode=False,
+            )
 
     def get_average(self, uuid: str, receiver_id: str) -> Optional[float]:
         """

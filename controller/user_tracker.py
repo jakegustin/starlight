@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from controller.rssi_processor import RSSIProcessor
+from controller.rssi_processor import RSSIProcessor, RSSISample
 from controller.zone_manager import ZoneManager
 
 if TYPE_CHECKING:
@@ -102,7 +102,7 @@ class UserTracker:
         receiver_id: str,
         raw_rssi: float,
         priority: int = 0,
-    ):
+    ) -> RSSISample:
         """
         Handle a new RSSI observation for a user from a specific receiver.
 
@@ -113,7 +113,7 @@ class UserTracker:
             priority: Optional user priority. Higher values win lighting conflicts.
         """
         # Update filter & rolling average now
-        self.rssi_processor.ingest(uuid, receiver_id, raw_rssi)
+        sample = self.rssi_processor.observe(uuid, receiver_id, raw_rssi)
 
         with self._lock:
             # Retrieve the user instance associated with the UUID
@@ -124,14 +124,16 @@ class UserTracker:
             if user.zone_receiver_id is None:
                 self._record_entry_sighting(user, receiver_id)
                 self._try_activate_entry(user)
-                return
+                return sample
 
             # Check to see if the user should be evicted from the queue due to timeout
             if self._check_eviction(user):
-                return
+                return sample
 
             # Evaluate whether the user qualifies to move to the next zone.
             self._evaluate_advancement(user)
+
+        return sample
 
     # ──────────────────────────────────────────────────────────────────────────
     # Read-only queries

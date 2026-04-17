@@ -31,6 +31,8 @@ class ControllerConfig:
         no_ratchet:
             When True, users can move to any zone (not just forward) based on which has the strongest signal.
             Hysteresis still applies to prevent thrashing.
+        live_plot:
+            When True, stream RSSI samples to the UI so receiver plots can be drawn live.
         rssi_timeout_threshold:
             RSSI floor (dBm) where if a user's average drops below this value, the eviction timer starts.
         rssi_timeout_duration:
@@ -59,3 +61,4 @@ class ControllerConfig:
     uuid_whitelist: List[str] = field(default_factory=list)
     raw_mode: bool = False
     no_ratchet: bool = False
+    live_plot: bool = False

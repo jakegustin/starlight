@@ -3,7 +3,7 @@
 from .config import ControllerConfig
 from .controller import Controller
 from .kalman_filter import KalmanFilter
-from .rssi_processor import RSSIProcessor
+from .rssi_processor import RSSIProcessor, RSSISample
 from .zone_manager import ZoneManager
 from .user_tracker import UserTracker
 from .serial_connection import SerialConnection
@@ -15,6 +15,7 @@ __all__ = [
     "Controller",
     "KalmanFilter",
     "RSSIProcessor",
+    "RSSISample",
     "ZoneManager",
     "UserTracker",
     "SerialConnection",

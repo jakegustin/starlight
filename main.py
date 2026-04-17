@@ -174,6 +174,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ── Plotting ────────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--live-plot",
+        action="store_true",
+        default=False,
+        help="Stream live raw and filtered RSSI samples to the browser UI.",
+    )
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
     parser.add_argument(
         "--log-level",
@@ -224,6 +232,7 @@ def main():
         uuid_whitelist=whitelist,
         raw_mode=args.no_filter,
         no_ratchet=args.no_ratchet,
+        live_plot=args.live_plot,
     )
 
     controller = Controller(config)

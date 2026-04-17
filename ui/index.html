@@ -91,7 +91,7 @@
       padding: 24px;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto auto;
+      grid-template-rows: auto auto auto;
       gap: 20px;
     }
 
@@ -241,7 +241,7 @@
     }
 
     /* ── Queue panel ─────────────────────────────────────────────────────── */
-    #queue-panel { grid-column: 2; grid-row: 1 / 3; }
+    #queue-panel { grid-column: 2; grid-row: 1 / 4; }
 
     .zone-section { margin-bottom: 20px; }
     .zone-section:last-child { margin-bottom: 0; }
@@ -325,6 +325,79 @@
     /* ── Log panel ───────────────────────────────────────────────────────── */
     #log-panel { grid-column: 1; grid-row: 2; }
 
+    /* ── RSSI plot panel ────────────────────────────────────────────────── */
+    #rssi-panel { grid-column: 1; grid-row: 3; }
+
+    .rssi-chart-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .rssi-chart-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .rssi-chart-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .rssi-chart-name {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .rssi-chart-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .rssi-chart-canvas {
+      width: 100%;
+      height: 140px;
+      display: block;
+      border-radius: 6px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+    }
+
+    .rssi-legend {
+      display: flex;
+      gap: 12px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      flex-shrink: 0;
+    }
+
+    .legend-swatch.raw { background: var(--red); }
+    .legend-swatch.filtered { background: var(--green); }
+
     #log-output {
       font-family: var(--font-mono);
       font-size: 11px;
@@ -366,6 +439,7 @@
       main { grid-template-columns: 1fr; }
       #queue-panel { grid-column: 1; grid-row: 2; }
       #log-panel   { grid-column: 1; grid-row: 3; }
+      #rssi-panel   { grid-column: 1; grid-row: 4; }
     }
   </style>
 </head>
@@ -434,6 +508,23 @@
       <div id="log-output"></div>
     </div>
   </div>
+
+  <!-- RSSI plots -->
+  <div class="card" id="rssi-panel">
+    <div class="card-header">
+      <h2>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 14 8 10 12 13 16 6 20 9"/>
+          <line x1="4" y1="20" x2="20" y2="20"/>
+        </svg>
+        Live RSSI
+      </h2>
+      <small style="color:var(--text-muted);font-size:11px;">raw and filtered per receiver</small>
+    </div>
+    <div class="card-body" id="rssi-body">
+      <div class="empty-state">Waiting for live RSSI samples…</div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -444,14 +535,16 @@
 const WS_URL = `ws://${location.hostname}:8765`;
 const RECONNECT_DELAY_MS = 3000;
 const MAX_LOG_LINES = 200;
+const MAX_RSSI_SAMPLES = 240;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // State
 // ═══════════════════════════════════════════════════════════════════════════
 
-let state = { receivers: {}, zones: [], users_by_zone: {} };
+let state = { receivers: {}, zones: [], users_by_zone: {}, live_plot: false };
 let ws = null;
 let reconnectTimer = null;
+let rssiHistory = {};
 
 // Drag-and-drop state
 let dragSrcIndex = null;
@@ -475,6 +568,9 @@ function connect() {
       if (msg.type === 'state') {
         state = msg;
         render();
+      } else if (msg.type === 'rssi_sample') {
+        ingestRssiSample(msg);
+        renderRssiPlots();
       }
     } catch (e) {
       log('err', `Bad message: ${e.message}`);
@@ -512,6 +608,7 @@ function setConnectionStatus(connected) {
 function render() {
   renderReceivers();
   renderQueue();
+  renderRssiPlots();
 }
 
 // ── Receivers ──────────────────────────────────────────────────────────────
@@ -610,6 +707,177 @@ function renderQueue() {
     `;
     body.appendChild(section);
   });
+}
+
+// ── RSSI plots ────────────────────────────────────────────────────────────
+
+function ingestRssiSample(sample) {
+  const receiverId = sample.receiver_id || sample.id;
+  if (!receiverId) return;
+
+  if (!rssiHistory[receiverId]) {
+    rssiHistory[receiverId] = [];
+  }
+
+  rssiHistory[receiverId].push({
+    ts: sample.timestamp || Date.now() / 1000,
+    raw: Number(sample.raw_rssi),
+    filtered: Number(sample.filtered_rssi),
+    average: Number(sample.average_rssi),
+    uuid: sample.uuid || 'unknown',
+    rawMode: Boolean(sample.raw_mode),
+  });
+
+  if (rssiHistory[receiverId].length > MAX_RSSI_SAMPLES) {
+    rssiHistory[receiverId].splice(0, rssiHistory[receiverId].length - MAX_RSSI_SAMPLES);
+  }
+}
+
+function renderRssiPlots() {
+  const body = document.getElementById('rssi-body');
+  const zones = state.zones || [];
+
+  if (!state.live_plot) {
+    body.innerHTML = '<div class="empty-state">Live plotting is disabled.</div>';
+    return;
+  }
+
+  if (zones.length === 0) {
+    body.innerHTML = '<div class="empty-state">Waiting for receivers…</div>';
+    return;
+  }
+
+  body.innerHTML = '';
+  const list = document.createElement('div');
+  list.className = 'rssi-chart-list';
+
+  zones.forEach((receiverId, index) => {
+    const samples = rssiHistory[receiverId] || [];
+    const latest = samples.length ? samples[samples.length - 1] : null;
+
+    const card = document.createElement('div');
+    card.className = 'rssi-chart-card';
+    card.innerHTML = `
+      <div class="rssi-chart-header">
+        <div class="rssi-chart-name">Z${index} · ${escHtml(receiverId)}</div>
+        <div class="rssi-chart-meta">
+          ${latest ? `raw ${latest.raw.toFixed(1)} dBm · filtered ${latest.filtered.toFixed(1)} dBm` : 'waiting for samples'}
+        </div>
+      </div>
+      <canvas class="rssi-chart-canvas" data-receiver="${escHtml(receiverId)}"></canvas>
+      <div class="rssi-legend">
+        <span class="legend-item"><span class="legend-swatch raw"></span>raw RSSI</span>
+        <span class="legend-item"><span class="legend-swatch filtered"></span>filtered RSSI</span>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+
+  body.appendChild(list);
+
+  requestAnimationFrame(() => {
+    zones.forEach((receiverId) => {
+      const canvas = Array.from(body.querySelectorAll('canvas[data-receiver]'))
+        .find((node) => node.dataset.receiver === receiverId);
+      if (canvas) {
+        drawRssiChart(canvas, rssiHistory[receiverId] || []);
+      }
+    });
+  });
+}
+
+function drawRssiChart(canvas, samples) {
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth || 1;
+  const height = canvas.clientHeight || 1;
+  canvas.width = Math.floor(width * dpr);
+  canvas.height = Math.floor(height * dpr);
+
+  const ctx = canvas.getContext('2d');
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, width, height);
+
+  if (!samples.length) {
+    ctx.fillStyle = 'rgba(125, 133, 144, 0.8)';
+    ctx.font = '12px var(--font)';
+    ctx.fillText('No RSSI samples yet', 16, height / 2);
+    ctx.restore();
+    return;
+  }
+
+  const values = [];
+  samples.forEach((sample) => {
+    if (Number.isFinite(sample.raw)) values.push(sample.raw);
+    if (Number.isFinite(sample.filtered)) values.push(sample.filtered);
+  });
+
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    ctx.restore();
+    return;
+  }
+
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+
+  min = Math.floor(min - 4);
+  max = Math.ceil(max + 4);
+
+  const pad = { top: 10, right: 12, bottom: 20, left: 44 };
+  const plotWidth = Math.max(1, width - pad.left - pad.right);
+  const plotHeight = Math.max(1, height - pad.top - pad.bottom);
+  const xStep = samples.length > 1 ? plotWidth / (samples.length - 1) : plotWidth;
+
+  function yFor(value) {
+    const clamped = Math.max(min, Math.min(max, value));
+    const pct = (clamped - min) / (max - min);
+    return pad.top + (1 - pct) * plotHeight;
+  }
+
+  // Grid and ticks
+  ctx.strokeStyle = 'rgba(125, 133, 144, 0.16)';
+  ctx.fillStyle = 'rgba(125, 133, 144, 0.9)';
+  ctx.font = '10px var(--font)';
+  ctx.lineWidth = 1;
+  const tickCount = 4;
+  for (let i = 0; i <= tickCount; i++) {
+    const value = min + ((max - min) * i) / tickCount;
+    const y = yFor(value);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
+    ctx.fillText(`${Math.round(value)}`, 8, y + 3);
+  }
+
+  function drawSeries(getValue, strokeStyle, widthPx, alpha) {
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = widthPx;
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    samples.forEach((sample, index) => {
+      const value = getValue(sample);
+      if (!Number.isFinite(value)) return;
+      const x = samples.length > 1 ? pad.left + index * xStep : pad.left + plotWidth / 2;
+      const y = yFor(value);
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  drawSeries((sample) => sample.raw, 'rgba(248, 81, 73, 0.9)', 1.75, 0.55);
+  drawSeries((sample) => sample.filtered, 'rgba(63, 185, 80, 0.95)', 2.5, 0.95);
+
+  ctx.restore();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
