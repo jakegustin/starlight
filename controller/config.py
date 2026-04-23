@@ -4,7 +4,7 @@ Every subsystem receives a reference to one shared config instance.
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -49,7 +49,7 @@ class ControllerConfig:
 
     baud_rate: int = 115200
     heartbeat_timeout: float = 5.0
-    kalman_process_noise: float = 0.01
+    kalman_process_noise: float = 5.0
     kalman_measurement_noise: float = 2.0
     rolling_window_size: int = 5
     hysteresis: float = 3.0
@@ -62,3 +62,4 @@ class ControllerConfig:
     raw_mode: bool = False
     no_ratchet: bool = False
     live_plot: bool = False
+    rssi_csv_log: Optional[str] = None

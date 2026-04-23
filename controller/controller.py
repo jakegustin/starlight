@@ -2,7 +2,9 @@
 The root of the Starlight Central Controller, orchestrating activites between submodules as needed
 """
 
+import csv
 import logging
+import os
 import queue
 import threading
 import time
@@ -17,6 +19,56 @@ from controller.websocket_server import WebSocketServer
 from controller.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)
+
+
+class RSSILogger:
+    """Write raw and filtered RSSI samples to a CSV file."""
+
+    def __init__(self, path: Optional[str]):
+        self._file = None
+        self._writer = None
+        if not path:
+            return
+
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        self._file = open(path, "a", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        if self._file.tell() == 0:
+            self._writer.writerow(
+                [
+                    "timestamp",
+                    "uuid",
+                    "receiver_id",
+                    "raw_rssi",
+                    "filtered_rssi",
+                    "average_rssi",
+                    "raw_mode",
+                ]
+            )
+            self._file.flush()
+
+    def log(self, sample, timestamp: float):
+        if self._writer is None:
+            return
+
+        self._writer.writerow([
+            f"{timestamp:.6f}",
+            sample.uuid,
+            sample.receiver_id,
+            f"{sample.raw_rssi:.2f}",
+            f"{sample.filtered_rssi:.2f}",
+            f"{sample.average_rssi:.2f}",
+            int(sample.raw_mode),
+        ])
+        self._file.flush()
+
+    def close(self):
+        if self._file is not None:
+            self._file.close()
+
 
 # Interval at which to issue heartbeat (liveliness) requests
 _HEARTBEAT_CADENCE = 2.0
@@ -105,6 +157,7 @@ class Controller:
         self._heartbeat_thread: Optional[threading.Thread] = None
 
         self._live_plot_enabled = config.live_plot
+        self._rssi_logger = RSSILogger(config.rssi_csv_log)
 
     @staticmethod
     def _normalise_uuid(uuid: str) -> str:
@@ -141,6 +194,7 @@ class Controller:
         """Signal all subsystems to shut down gracefully."""
         self._running = False
         self._serial_manager.stop()
+        self._rssi_logger.close()
         logger.info("Controller: stopped")
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -289,6 +343,9 @@ class Controller:
 
         # Valid data packet received, have the RSSI processor handle it.
         sample = self._user_tracker.process_rssi(uuid, receiver_id, rssi, priority=priority)
+
+        if self._rssi_logger is not None:
+            self._rssi_logger.log(sample, message.get("timestamp", time.time()))
 
         # Update the UI accordingly
         self._broadcast_state()

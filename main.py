@@ -181,6 +181,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="Stream live raw and filtered RSSI samples to the browser UI.",
     )
+    parser.add_argument(
+        "--rssi-log",
+        metavar="PATH",
+        default=None,
+        help="Write raw and filtered RSSI samples per user and receiver to a CSV file.",
+    )
 
     # ── Diagnostics ───────────────────────────────────────────────────────────
     parser.add_argument(
@@ -233,6 +239,7 @@ def main():
         raw_mode=args.no_filter,
         no_ratchet=args.no_ratchet,
         live_plot=args.live_plot,
+        rssi_csv_log=args.rssi_log,
     )
 
     controller = Controller(config)
