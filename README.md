@@ -1,162 +1,145 @@
-# Starlight — BLE Queue Positioning System
+# Starlight
 
-A prototype BLE-based queue zone tracker. Three ESP32 receivers report advertisement RSSI to a Python central controller, which uses a Kalman filter + rolling average + hysteresis logic to assign users to zones and push live state to a browser-based configuration UI.
+Starlight is a zone-based queue tracking prototype utilizing BLE RSSI:
 
-## Quick start
+- ESP32 receivers scan BLE advertisements.
+- A Python controller ingests receiver heartbeats/data over serial.
+- RSSI is processed with Kalman filtering + rolling average.
+- Users are assigned to logical queue zones with hysteresis and timeout eviction.
+- A browser UI shows receiver health, zone order, queue state, logs, and optional live RSSI plots.
 
-### 1. Install Python dependencies
+## Repository status (current)
+
+- Controller code is active and covered by unit tests.
+- UI is a single static page served by the Python process.
+- Firmware sketches are in [arduino/](arduino/), with both serial and ESP-NOW variants, though ESP-NOW is no longer officially supported.
+- Hardware-in-the-loop firmware testing is not automated in this repo.
+
+## Project layout
+
+```text
+starlight/
+├── main.py
+├── plot_rssi.py
+├── requirements.txt
+├── uuids.txt
+├── INSTRUCTIONS.md
+├── controller/
+│   ├── config.py
+│   ├── controller.py
+│   ├── kalman_filter.py
+│   ├── rssi_processor.py
+│   ├── user_tracker.py
+│   ├── zone_manager.py
+│   ├── serial_connection.py
+│   ├── serial_manager.py
+│   ├── websocket_server.py
+│   └── tests/
+├── arduino/
+│   ├── esp_advertiser/                  # simple BLE advertiser sketch
+│   ├── receiver/                        # serial receiver
+│   ├── receiver_espnow/                 # esp-now receiver
+│   └── receiver_espnow_gateway/         # esp-now <-> serial gateway
+├── ui/
+│   └── index.html
+├── data/                                # captured RSSI datasets
+└── media/                               # demo videos/assets
+```
+
+## Quick start (controller)
+
+1. Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Flash the firmware
+2. Put UUIDs to track (one per line) in [uuids.txt](uuids.txt).
 
-#### Serial Variant
-- `firmware/receiver/receiver.ino` 
-  - Edit `RECEIVER_ID` to be a unique string value, then flash the board.
-  - Repeat this for all desired BLE receiver nodes.
+3. Start controller:
 
-#### ESP-NOW variant
-- `firmware/receiver_espnow_gateway/receiver_espnow_gateway.ino`
-  - Flash this to one ESP32 connected to the controller/laptop via USB.
-  - It forwards ESP-NOW messages to Serial JSON for the Python controller.
-- `firmware/receiver_ble_to_espnow/receiver_ble_to_espnow.ino`
-  - Flash this to each BLE receiver node.
-  - It scans BLE advertisements and sends heartbeat/data via ESP-NOW.
-
-### 3. Edit your UUID whitelist
-Add your BLE advertiser UUIDs (one per line) to `uuids.txt`.
-
-### 4. Run the controller
 ```bash
 python main.py --whitelist uuids.txt
 ```
 
-The controller auto-discovers connected ESP32s via USB serial heartbeats.  
-Config UI: **http://localhost:8080**  
-WebSocket: **ws://localhost:8765**
+Defaults:
 
-### 5. Run tests
+- UI: http://localhost:8080
+- WebSocket: ws://localhost:8765
+
+## CLI options
+
 ```bash
-pytest controller/tests/ -v
-```
-
-## CLI reference
-```
 python main.py --help
 ```
 
-Key flags:
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--whitelist` | *(required)* | Path to UUID whitelist file |
-| `--baud-rate` | 115200 | Serial baud rate |
-| `--heartbeat-timeout` | 5.0 s | Seconds before receiver marked inactive |
-| `--kalman-q` | 0.01 | Kalman process noise (Q) |
-| `--kalman-r` | 2.0 | Kalman measurement noise (R) |
-| `--rolling-window` | 5 | Rolling average window size |
-| `--hysteresis` | 3.0 dBm | Advancement threshold |
-| `--rssi-threshold` | -85 dBm | Eviction RSSI floor |
-| `--rssi-timeout` | 10.0 s | Eviction timer duration |
+Common flags:
+
+| Flag | Default | Purpose |
+|---|---:|---|
+| `--whitelist` | required | UUID whitelist text file |
+| `--ws-host` | localhost | Bind host for WS/UI |
 | `--ws-port` | 8765 | WebSocket port |
-| `--ui-port` | 8080 | Config UI HTTP port |
-| `--live-plot` | false | Stream raw and filtered RSSI samples to the browser UI |
-| `--log-level` | INFO | DEBUG / INFO / WARNING / ERROR |
+| `--ui-port` | 8080 | HTTP UI port |
+| `--baud-rate` | 115200 | Serial baud |
+| `--heartbeat-timeout` | 5.0 | Receiver inactivity timeout (s) |
+| `--kalman-q` | 0.01 | Kalman process noise |
+| `--kalman-r` | 2.0 | Kalman measurement noise |
+| `--rolling-window` | 5 | Rolling average window size |
+| `--hysteresis` | 3.0 | Zone-advance margin (dBm) |
+| `--rssi-threshold` | -85.0 | Eviction floor (dBm) |
+| `--rssi-timeout` | 10.0 | Eviction duration (s) |
+| `--no-filter` | false | Use raw RSSI (skip filter + rolling average) |
+| `--no-ratchet` | false | Allow bidirectional zone movement |
+| `--live-plot` | false | Broadcast RSSI samples to UI charts |
+| `--rssi-log` | unset | CSV output path for raw/filtered/avg RSSI |
+| `--log-level` | INFO | Logging verbosity |
 
-## Architecture
+## Firmware sketches
 
-```
-ESP32 (×3)                  Central Controller (Python)
-──────────                  ───────────────────────────
-BLE Scanner                 main.py
-  │ JSON/Serial               └─ Controller
-  ▼                               ├─ SerialManager
-SerialManager ──────────────────▶     ├─ SerialConnection (per port)
-  │ queue.Queue                   ├─ ZoneManager
-  ▼                               ├─ RSSIProcessor
-Controller._process_loop            │   └─ KalmanFilter (per uuid+receiver)
-  ├─ heartbeat → ZoneManager      └─ UserTracker
-  └─ data → UserTracker               └─ WebSocketServer
-                                           ├─ WS broadcasts → Browser UI
-                                           └─ HTTP serves ui/index.html
-```
+### Serial mode (recommended)
 
-## File layout
-```
-starlight/
-├── main.py                  Entry point
-├── requirements.txt
-├── uuids.txt                BLE UUID whitelist
-├── controller/
-│   ├── config.py            ControllerConfig dataclass
-│   ├── controller.py        Central orchestrator
-│   ├── kalman_filter.py     1D Kalman filter
-│   ├── rssi_processor.py    Filter + rolling average manager
-│   ├── zone_manager.py      Ordered zone list
-│   ├── user_tracker.py      Zone assignment + eviction logic
-│   ├── serial_connection.py Single serial port reader thread
-│   ├── serial_manager.py    Port discovery + connection pool
-│   ├── websocket_server.py  WS + HTTP servers
-│   └── tests/
-│       ├── test_kalman_filter.py
-│       ├── test_rssi_processor.py
-│       ├── test_zone_manager.py
-│       ├── test_user_tracker.py
-│       └── test_serial_mock.py
-├── arduino/
-│   └── receiver/
-│       └── receiver.ino                 ESP32 BLE receiver firmware with Serial communications
-│   └── receiver_espnow/
-│       └── receiver_espnow.ino          ESP32 BLE receiver firmware with ESP-NOW communications
-│   └── receiver_espnow_gateway/
-│       └── receiver_espnow_gateway.ino  ESP32 gateway firmware, forwarding ESP-NOW messages to controller via Serial
-└── ui/
-    └── index.html                       Configuration UI
+- Receiver sketch: [arduino/receiver/receiver.ino](arduino/receiver/receiver.ino)
+- Set a unique `RECEIVER_ID` per board.
+- The controller auto-discovers macOS USB serial ports matching ESP32-style device names.
+
+### ESP-NOW mode (experimental/prototype)
+
+- Receiver: [arduino/receiver_espnow/receiver_espnow.ino](arduino/receiver_espnow/receiver_espnow.ino)
+- Gateway: [arduino/receiver_espnow_gateway/receiver_espnow_gateway.ino](arduino/receiver_espnow_gateway/receiver_espnow_gateway.ino)
+- Set gateway MAC in receiver sketch (`GATEWAY_MAC`) before flashing.
+
+## Protocol (controller side)
+
+Messages are one-line JSON over serial.
+
+Receiver to controller:
+
+```json
+{ "type": "heartbeat", "id": "receiver-1" }
+{ "type": "data", "id": "receiver-1", "uuid": "...", "rssi": -67 }
 ```
 
-## Message Flow (Serial)
+Controller to receiver:
 
-```
-ESP32 firmware
-    ↓ Serial JSON (heartbeat / data)
-SerialConnection (per port, threaded)
-    ↓ parsed + timestamped dict
-shared queue.Queue
-    ↓ consumed by _process_loop (main thread)
-Controller._dispatch_message
-    ├─ heartbeat → _handle_heartbeat → ZoneManager, UUID whitelist push
-    └─ data      → _handle_data      → UserTracker → RSSIProcessor
+```json
+{ "type": "uuid", "uuids": ["...", "..."] }
+{ "type": "command", "command": "blink" }
+{ "type": "command", "command": "lighting", "light_target": "<uuid or empty>" }
 ```
 
-## Message Flow (ESP-NOW)
+## Tests
 
-```
-ESP32 firmware
-    ↓ ESP-NOW JSON (heartbeat / data)
-ESP32 gateway firmware
-    ↓ parse ESP-NOW JSON, forward to controller via Serial
-SerialConnection (per port, threaded)
-    ↓ parsed + timestamped dict
-shared queue.Queue
-    ↓ consumed by _process_loop (main thread)
-Controller._dispatch_message
-    ├─ heartbeat → _handle_heartbeat → ZoneManager, UUID whitelist push
-    └─ data      → _handle_data      → UserTracker → RSSIProcessor
+Run unit tests:
+
+```bash
+pytest controller/tests -v
 ```
 
-## Message Protocol
+The suite currently covers:
 
-All messages are newline-terminated JSON on a single line.
-
-Outbound (ESP32 → Controller):
-
-```
-  Heartbeat:  { "type": "heartbeat", "id": "<RECEIVER_ID>" }
-  Data:       { "type": "data",      "id": "<RECEIVER_ID>", "uuid": "<UUID>", "rssi": <int> }
-```
-
-Inbound (Controller → ESP32):
-```
-  UUID list:  { "type": "uuid",    "uuids": ["<UUID>", ...] }
-  Blink:      { "type": "command", "command": "blink" }
-```
+- `KalmanFilter`
+- `RSSIProcessor`
+- `ZoneManager`
+- `UserTracker`
+- Controller dispatch behavior with mocked serial ingestion

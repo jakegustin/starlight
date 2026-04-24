@@ -2,3 +2,5 @@ pyserial
 websockets
 pytest
 pylint
+pandas
+matplotlib
